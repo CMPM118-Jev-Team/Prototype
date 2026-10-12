@@ -17,15 +17,15 @@ License
 -------
 
 This program is free software: you can redistribute it and/or modify
-it under the terms of the **GNU General Public License Version 3** as 
+it under the terms of the **GNU General Public License Version 3** as
 published by the Free Software Foundation.
 
 Play
 ----
 
-You can play the game on all canvas-enabled browsers.  **Touch controls** are
-enabled for mobile browsers.  The game is **resolution-independent** and smoothly scales to
-fit the size of any screen.  **Performance** may increase by shrinking the window or zooming in with your browser.
+You can play the game on all canvas-enabled browsers. **Touch controls** are
+enabled for mobile browsers. The game is **resolution-independent** and smoothly scales to
+fit the size of any screen. **Performance** may increase by shrinking the window or zooming in with your browser.
 
 ### Main Controls
 
@@ -60,9 +60,9 @@ Each of the following games are playable from the main menu.
 
 ### Turbo Mode
 
-Each game has an alternate mode called Turbo (a.k.a. speedy mode).  This is a
+Each game has an alternate mode called Turbo (a.k.a. speedy mode). This is a
 popular hardware modification of the game found in many of the original arcade
-cabinets.  In this mode, Pac-Man travels about twice as fast (same speed as the disembodied eyes of the
+cabinets. In this mode, Pac-Man travels about twice as fast (same speed as the disembodied eyes of the
 ghosts) and is not slowed down when eating pellets.
 
 ### High Scores
@@ -72,15 +72,15 @@ High scores for each game (normal and turbo separately) are stored on your local
 Learn Mode
 ----------
 
-Learn Mode allows you to visualize the behaviors of the ghosts.  (The colored square represents the ghost bait.)
+Learn Mode allows you to visualize the behaviors of the ghosts. (The colored square represents the ghost bait.)
 
 ![Learn][2]
 
 Practice Mode
 -------------
 
-This mode allows you to practice the game with special features.  You can go
-into **slow-motion** or **rewind time** with the special onscreen buttons or the hotkeys listed below.  (The time-manipulation controls and design were borrowed from the game [Braid](http://braid-game.com/)).  You can also turn on **invincibility** or **ghost visualizers** from the menu.
+This mode allows you to practice the game with special features. You can go
+into **slow-motion** or **rewind time** with the special onscreen buttons or the hotkeys listed below. (The time-manipulation controls and design were borrowed from the game [Braid](http://braid-game.com/)). You can also turn on **invincibility** or **ghost visualizers** from the menu.
 
 ![Practice][3]
 
@@ -99,7 +99,7 @@ into **slow-motion** or **rewind time** with the special onscreen buttons or the
 Procedurally-Generated Maps
 ---------------------------
 
-In the **Cookie-Man** game mode, the mazes change as often as they do in Ms. Pac-Man, but are **procedurally generated**.  Each level has a pre-defined color palette, granting an element of consistency to the random structure of the mazes.
+In the **Cookie-Man** game mode, the mazes change as often as they do in Ms. Pac-Man, but are **procedurally generated**. Each level has a pre-defined color palette, granting an element of consistency to the random structure of the mazes.
 
 ![Procedural][4]
 
@@ -127,12 +127,30 @@ I also chose to leave out the **overflow bug** which shifts a ghost target when 
 
 ### Report/Fix Bugs
 
-Feel free to report any inaccuracies that may detract or simply annoy.  Any reverse-engineers willing to contribute their expertise to this project would be a big help as well!
+Feel free to report any inaccuracies that may detract or simply annoy. Any reverse-engineers willing to contribute their expertise to this project would be a big help as well!
+
+Building and Running Locally
+----------------------------
+
+The game is a fully static site with no dependencies; the only tool needed is [Deno](https://deno.com).
+
+```sh
+deno task build          # concatenate src/*.js into "pacman.js", update the "index.htm" timestamp, and rebuild "debug.htm"
+deno task serve [port]   # serve the project at http://localhost:8000/ (e.g. "deno task serve 3000")
+```
+
+Then open `http://localhost:8000/` (the bundled release) or
+`http://localhost:8000/debug.htm` (the individual `src/*.js` files, convenient while editing
+the sources) in a canvas-enabled browser. Serving over HTTP is recommended over opening
+`index.htm` directly, because some browsers restrict audio loading and `localStorage`
+(high scores) on `file://` pages.
 
 Navigating the Repository
 -------------------------
+
 - all javascript source files are located in the "src/" directory
-- "build.sh" file concatenates all the source files into "pacman.js" in the top directory
+- "build.ts" (`deno task build`) concatenates all the source files into "pacman.js" in the top directory
+- "serve.ts" (`deno task serve [port]`) is a minimal static file server for playing the game locally (default port 8000)
 - "debug.htm" displays the game by using the "src/*.js" files
 - "index.htm" displays the game by using the "pacman.js" file only
 - the "fruit" directory contains notes and diagrams on Ms. Pac-Man fruit paths
@@ -145,17 +163,17 @@ Credits
 
 ### Reverse-Engineers
 
-Thanks to **Jamey Pittman** for compiling [The Pac-Man Dossier](http://home.comcast.net/~jpittman2/pacman/pacmandossier.html) from his own research and those of other reverse-engineers, notably 'Dav' and 'JamieVegas' from [this Atari Age forum thread](http://www.atariage.com/forums/topic/68707-pac-man-ghost-ai-question/).  Further thanks to Jamey Pittman for replying to my arcade implementation-specific questions with some very elaborate details to meet the accuracy requirements of this project.
+Thanks to **Jamey Pittman** for compiling [The Pac-Man Dossier](http://home.comcast.net/~jpittman2/pacman/pacmandossier.html) from his own research and those of other reverse-engineers, notably 'Dav' and 'JamieVegas' from [this Atari Age forum thread](http://www.atariage.com/forums/topic/68707-pac-man-ghost-ai-question/). Further thanks to Jamey Pittman for replying to my arcade implementation-specific questions with some very elaborate details to meet the accuracy requirements of this project.
 
 Thanks to **Bart Grantham** for sharing his expert knowledge on Ms. Pac-Man's internals, providing me with an annotated disassembly and notes on how fruit paths work in meticulous detail.
 
 ### Original Games
 
-Thanks to the original Pac-Man team at Namco for creating such an enduring game.  And thanks to the MAME team for their arcade emulator and very helpful debugger.
+Thanks to the original Pac-Man team at Namco for creating such an enduring game. And thanks to the MAME team for their arcade emulator and very helpful debugger.
 
 Thanks to the Ms. Pac-Man team at GCC for improving Pac-Man with a variety of aesthetic maps that I based the map generator on.
 
-Thanks to Jonathan Blow for creating the rewind mechanic in [Braid](http://braid-game.com) which inspired the same mechanic in my project.  Further thanks for presenting the implementation details in [this talk](https://store.cmpgame.com/product/5900/The-Implementation-of-Rewind-in-braid) which helped in my own implementation.
+Thanks to Jonathan Blow for creating the rewind mechanic in [Braid](http://braid-game.com) which inspired the same mechanic in my project. Further thanks for presenting the implementation details in [this talk](https://store.cmpgame.com/product/5900/The-Implementation-of-Rewind-in-braid) which helped in my own implementation.
 
 ### Art
 
@@ -174,8 +192,6 @@ Links to Public Feedback
 - http://boards.straightdope.com/sdmb/showthread.php?t=664081
 - http://www.classicarcadegaming.com/forums/index.php?topic=4563.0
 - http://news.dice.com/2012/09/04/pac-man-online-open-source/
-
-
 
 [1]: https://bitbucket.org/shaunew/pac-man/raw/4714800233a9/shots/montage2.png
 [2]: https://bitbucket.org/shaunew/pac-man/raw/4714800233a9/shots/learn.png

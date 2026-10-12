@@ -2,7 +2,7 @@
 // Copyright 2012 Shaun Williams
 //
 //  This program is free software: you can redistribute it and/or modify
-//  it under the terms of the GNU General Public License Version 3 as 
+//  it under the terms of the GNU General Public License Version 3 as
 //  published by the Free Software Foundation.
 //
 //  This program is distributed in the hope that it will be useful,
@@ -13532,4 +13532,2220 @@ window.addEventListener("load", function() {
 	}
     executive.init();
 });
+//@line 1 "agent/01-config.js"
+//////////////////////////////////////////////////////////////////////////////////////
+// Pac-Man AI Agent — 01 Configuration
+//
+// Provider registry and runtime settings for the AI player harness.
+// All agent code lives in agent/ and is appended to the bundle after the game
+// files (see build.ts). Nothing in src/ knows about or depends on it.
+//
+// Every provider speaks the SystemOne wire format shared by Jev and Clef:
+//   POST {endpoint}  body:  { model, state, questions[, images] }
+//   response:        { model, answers: { <question-id>: {...} }, usage }
+//
+// Settings sources (highest precedence first):
+//   URL params (?agent=ollama&state=text&hz=10&endpoint=...&token=...)
+//   localStorage  ('pacmanAgent.settings')
+//   defaults below
+
+var pacmanAgent = (function () {
+  // ---- providers ---------------------------------------------------------
+
+  // 'vision' marks whether the provider accepts the Clef `images` extension
+  // (base64-encoded screenshots) in the request body.
+  var providers = {
+    ollama: {
+      label: "Ollama clef-flash (local GPU)",
+      endpoint: "http://localhost:11434/v1/systemone",
+      model: "clef-flash",
+      vision: true,
+      auth: "none",
+    },
+    vllm: {
+      label: "clef-systemone / vLLM (local GPU)",
+      // FP8 image maps its docker port 8000 to host 8001 so it doesn't
+      // collide with `deno task serve` on 8000.
+      endpoint: "http://localhost:8001/v1/systemone",
+      model: "clef-flash",
+      vision: false,
+      auth: "none",
+    },
+    cloudflare: {
+      label: "Cloudflare Workers AI clef-flash (cloud)",
+      endpoint:
+        "https://api.cloudflare.com/client/v4/accounts/%ACCOUNT%/ai/run/@cf/cloudflare/clef-flash",
+      model: "clef-flash",
+      vision: true,
+      auth: "bearer", // Workers AI REST API token
+    },
+    typesafe: {
+      label: "TypeSafe Jev (cloud)",
+      endpoint: "https://api.typesafe.ai/v1/systemone",
+      model: "jev-latest",
+      vision: false,
+      auth: "bearer", // TypeSafe API key
+    },
+    custom: {
+      label: "Custom endpoint",
+      endpoint: "http://localhost:11434/v1/systemone",
+      model: "clef-flash",
+      vision: true,
+      auth: "none",
+    },
+  };
+
+  var providerOrder = ["ollama", "vllm", "cloudflare", "typesafe", "custom"];
+
+  // ---- settings ----------------------------------------------------------
+
+  var settings = {
+    provider: "ollama", // which provider to ask
+    stateMode: "text", // 'text' (prose facts + history) or 'shot' (screenshot image)
+    mode: "realtime", // 'realtime' (never disturb the game) or 'fixed' (the
+    // game freezes for each decision — see 04-controller.js)
+    hz: 10, // poll rate: how often the model is asked (ONE prompt in
+    // flight at a time — a tick that fires while an answer is still
+    // pending is skipped; see 04-controller.js)
+    history: 4, // recent decisions sent in the state (1-10), each with
+    // its timestamp and whether it went through — see 04-controller.js
+    shotWidth: 320, // screenshot width in px (112-896): vision tokens
+    // scale with pixels
+    timeoutMs: 5000, // give up on a request after this long
+    endpoint: "", // override the provider endpoint
+    model: "", // override the provider model id
+    token: "", // bearer token for cloud providers
+    account: "", // Cloudflare account id (for %ACCOUNT%)
+    verbose: true, // log every applied decision
+  };
+
+  var LS_KEY = "pacmanAgent.settings";
+
+  var applyUrlParams = function () {
+    var q = {};
+    try {
+      var s = window.location.search;
+      if (s && s.length > 1) {
+        var parts = s.substring(1).split("&");
+        for (var i = 0; i < parts.length; i++) {
+          var kv = parts[i].split("=");
+          q[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1] || "");
+        }
+      }
+    } catch (e) {
+      /* ignore malformed urls */
+    }
+    if (q.agent && providers[q.agent]) settings.provider = q.agent;
+    if (q.state == "text" || q.state == "shot") settings.stateMode = q.state;
+    if (q.mode == "realtime" || q.mode == "fixed") settings.mode = q.mode;
+    if (q.hz) {
+      var hz = parseInt(q.hz, 10);
+      if (hz > 0) settings.hz = hz;
+    }
+    if (q.history) {
+      var h = parseInt(q.history, 10);
+      if (h >= 1 && h <= 10) settings.history = h;
+    }
+    if (q.shotwidth) {
+      var sw = parseInt(q.shotwidth, 10);
+      if (sw >= 112 && sw <= 896) settings.shotWidth = sw;
+    }
+    if (q.endpoint) settings.endpoint = q.endpoint;
+    if (q.model) settings.model = q.model;
+    if (q.token) settings.token = q.token;
+    if (q.account) settings.account = q.account;
+    if (q.timeout) {
+      var t = parseInt(q.timeout, 10);
+      if (t > 0) settings.timeoutMs = t;
+    }
+    if (q.verbose == "0" || q.verbose == "false") settings.verbose = false;
+  };
+
+  var loadSettings = function () {
+    try {
+      var raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        var saved = JSON.parse(raw);
+        for (var k in saved) settings[k] = saved[k];
+      }
+    } catch (e) {
+      /* private mode or stale junk — ignore */
+    }
+    applyUrlParams();
+  };
+
+  var saveSettings = function () {
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(settings));
+    } catch (e) {
+      /* ignore */
+    }
+  };
+
+  loadSettings();
+
+  // ---- helpers ----------------------------------------------------------
+
+  var log = function (msg) {
+    var args = Array.prototype.slice.call(arguments);
+    args[0] = "[agent] " + msg;
+    console.log.apply(console, args);
+  };
+
+  return {
+    providers: providers,
+    providerOrder: providerOrder,
+    settings: settings,
+    log: log,
+    save: saveSettings,
+
+    getProvider: function () {
+      return providers[settings.provider] || providers.ollama;
+    },
+    describe: function () {
+      var p = this.getProvider();
+      return (
+        settings.provider +
+        " (" +
+        p.label +
+        "), state=" +
+        settings.stateMode +
+        ", mode=" +
+        settings.mode +
+        ", hz=" +
+        settings.hz +
+        ", model=" +
+        (settings.model || p.model)
+      );
+    },
+  };
+})();
+//@line 1 "agent/02-provider.js"
+//////////////////////////////////////////////////////////////////////////////////////
+// Pac-Man AI Agent — 02 Provider client
+//
+// Sends one SystemOne request ({ model, state, questions[, images] }) to the
+// configured provider and resolves to { answers, raw, ms }.
+//
+// The wire format is shared, so the same client works for:
+//   - Ollama clef-flash (local)             POST /v1/systemone
+//   - clef-systemone / vLLM FP8 image (local) POST /v1/systemone
+//   - Cloudflare Workers AI REST             (result envelope is unwrapped)
+//   - TypeSafe Jev hosted API                POST /v1/systemone
+
+(function () {
+  var buildEndpoint = function () {
+    var s = pacmanAgent.settings;
+    var endpoint = s.endpoint || pacmanAgent.getProvider().endpoint;
+    if (endpoint.indexOf("%ACCOUNT%") >= 0) {
+      if (!s.account) {
+        throw new Error(
+          "the Cloudflare provider needs an account id " +
+            "(?account=... or pacmanAgent.settings.account = '...')",
+        );
+      }
+      endpoint = endpoint.replace("%ACCOUNT%", encodeURIComponent(s.account));
+    }
+    return endpoint;
+  };
+
+  var buildBody = function (state, questions, images) {
+    var s = pacmanAgent.settings;
+    return {
+      model: s.model || pacmanAgent.getProvider().model,
+      state: state,
+      questions: questions,
+      images: images && images.length ? images : undefined,
+    };
+  };
+
+  var buildHeaders = function () {
+    var headers = { "content-type": "application/json" };
+    if (pacmanAgent.getProvider().auth == "bearer") {
+      var token = pacmanAgent.settings.token;
+      if (!token) {
+        throw new Error(
+          "the " +
+            pacmanAgent.settings.provider +
+            " provider needs an API token (?token=... or pacmanAgent.settings.token = '...')",
+        );
+      }
+      headers["Authorization"] = "Bearer " + token;
+    }
+    return headers;
+  };
+
+  // Cloudflare's REST API wraps results in { success, result, ... };
+  // the other providers return the payload directly.
+  var unwrap = function (json) {
+    if (json && json.success !== undefined && json.result !== undefined) {
+      return json.result;
+    }
+    return json;
+  };
+
+  // latency bookkeeping (exponentially weighted moving average)
+  var ewmaMs = 0;
+
+  pacmanAgent.ask = function (state, questions, images) {
+    var t0 = Date.now();
+    var endpoint, headers, body;
+    try {
+      endpoint = buildEndpoint();
+      headers = buildHeaders();
+      body = buildBody(state, questions, images);
+    } catch (e) {
+      return Promise.reject(e);
+    }
+
+    var ctrl = new AbortController();
+    // bound — an unbound `setTimeout(ctrl.abort, ...)` throws
+    // `TypeError: Illegal invocation` when the timeout fires (it
+    // detaches the method from its controller), so a timed-out
+    // request would never actually be cancelled
+    var timer = setTimeout(function () {
+      ctrl.abort();
+    }, pacmanAgent.settings.timeoutMs);
+
+    return fetch(endpoint, {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+      .then(function (r) {
+        if (!r.ok) {
+          return r.text().then(function (t) {
+            throw new Error(
+              "http " + r.status + " from provider: " + t.slice(0, 200),
+            );
+          });
+        }
+        return r.json();
+      })
+      .then(function (json) {
+        clearTimeout(timer);
+        var ms = Date.now() - t0;
+        ewmaMs = ewmaMs ? ewmaMs * 0.8 + ms * 0.2 : ms;
+        pacmanAgent.lastLatencyMs = ms;
+        pacmanAgent.latencyEwmaMs = Math.round(ewmaMs);
+        var payload = unwrap(json);
+        if (!payload || !payload.answers) {
+          throw new Error(
+            "provider response has no answers: " +
+              JSON.stringify(json).slice(0, 200),
+          );
+        }
+        return { answers: payload.answers, raw: payload, ms: ms };
+      })
+      .catch(function (err) {
+        clearTimeout(timer);
+        if (err && err.name == "AbortError") {
+          err.message =
+            "request timed out after " + pacmanAgent.settings.timeoutMs + "ms";
+        }
+        throw err;
+      });
+  };
+})();
+//@line 1 "agent/03-gamestate.js"
+//////////////////////////////////////////////////////////////////////////////////////
+// Pac-Man AI Agent — 03 Game state serialization
+//
+// Turns the live game into one SystemOne request:
+//   - the model input ('state'):
+//       'text' mode: plain-sentence facts — position and passages from the
+//                    current tile, each ghost in words (with a consequence
+//                    clause when it is on pac-man's lane), passages from the
+//                    next intersection — plus the recent decision history.
+//                    NO ASCII maze: probing showed clef-flash does not read
+//                    it (see 'Model comprehension' in README /
+//                    dev/model_probe.ts), so it is not paid for.
+//       'shot' mode: a downscaled annotated screenshot (base64 PNG) sent in
+//                    the Clef 'images' extension, plus the same facts/history.
+//   - the question: a real-time 'direction' choice (see buildQuestions):
+//       current heading → continue straight (applies immediately)
+//       opposite         → u-turn (applies immediately)
+//       side direction   → turn, held until the next intersection, consumed
+//                          there (replaced by any newer decision)
+//
+// Only real, current game state is sent — never extrapolated or synthetic
+// data. The question tells the model that its answers land late and that it
+// must plan ahead; accounting for request latency is the model's job.
+
+(function () {
+  // direction names indexed by the DIR_* enums from direction.js
+  // (DIR_UP=0, DIR_LEFT=1, DIR_DOWN=2, DIR_RIGHT=3)
+  var DIR_NAMES = ["up", "left", "down", "right"];
+  var DIR_ENUMS = {
+    up: DIR_UP,
+    left: DIR_LEFT,
+    down: DIR_DOWN,
+    right: DIR_RIGHT,
+  };
+  pacmanAgent.DIR_NAMES = DIR_NAMES;
+  pacmanAgent.dirEnumByName = DIR_ENUMS;
+
+  // the direction pac-man is committed to
+  var headingEnum = function () {
+    if (typeof pacman == "undefined") return DIR_LEFT;
+    if (pacman.dirEnum != undefined) return pacman.dirEnum;
+    if (pacman.nextDirEnum != undefined) return pacman.nextDirEnum;
+    return DIR_LEFT;
+  };
+
+  // ---- the walk: the next intersection ahead of Pac-Man ------------------
+  //
+  // Steps forward one tile at a time along the current heading until
+  // reaching a tile where Pac-Man can do something other than continue
+  // straight (or a wall). That tile is the next decision point. Tunnels
+  // wrap. (Marked 'X' in the maze and described in the stats.)
+  pacmanAgent.findNextIntersection = function () {
+    var dirEnum = headingEnum();
+
+    var dir = {};
+    setDirFromEnum(dir, dirEnum);
+
+    var cap = map.numCols + map.numRows; // a walk can never exceed this
+
+    var tx = pacman.tile.x;
+    var ty = pacman.tile.y;
+    var steps = 0;
+
+    while (steps < cap) {
+      var nx = tx + dir.x;
+      var ny = ty + dir.y;
+      if (nx < 0)
+        nx += map.numCols; // tunnel wrap
+      else if (nx >= map.numCols) nx -= map.numCols;
+      if (!map.isFloorTile(nx, ny)) break; // wall ahead: decide here
+      tx = nx;
+      ty = ny;
+      steps++;
+
+      // any open passage other than straight ahead means a choice here
+      var openings = 0;
+      for (var e = 0; e < 4; e++) {
+        if (e == rotateAboutFace(dirEnum)) continue;
+        var d = {};
+        setDirFromEnum(d, e);
+        var ox = tx + d.x;
+        var oy = ty + d.y;
+        if (ox < 0) ox += map.numCols;
+        else if (ox >= map.numCols) ox -= map.numCols;
+        if (map.isFloorTile(ox, oy)) openings++;
+      }
+      if (openings > 1) break; // intersection reached
+    }
+
+    // the directions open at the decision tile
+    var options = [];
+    for (var e = 0; e < 4; e++) {
+      var d = {};
+      setDirFromEnum(d, e);
+      var ox = tx + d.x;
+      var oy = ty + d.y;
+      if (ox < 0) ox += map.numCols;
+      else if (ox >= map.numCols) ox -= map.numCols;
+      if (map.isFloorTile(ox, oy)) options.push(e);
+    }
+
+    return {
+      tile: { x: tx, y: ty },
+      steps: steps,
+      dirEnum: dirEnum,
+      options: options,
+    };
+  };
+
+  // shortest wrapped horizontal distance from pacman's column to x
+  var wrapDx = function (x) {
+    var d = (x - pacman.tile.x) % map.numCols;
+    if (d > map.numCols / 2) d -= map.numCols;
+    if (d < -map.numCols / 2) d += map.numCols;
+    return d;
+  };
+
+  // ---- stats (shared by the text and screenshot states) ------------------
+  //
+  // These are PROSE, deliberately. Probing clef-flash (agent/dev/model_probe.ts)
+  // showed it does not read the ASCII maze (it will answer 'straight' into a
+  // wall for as long as the wall is only drawn), and ignores telegraphic
+  // coordinates — but it does react to plain declarative sentences about its
+  // immediate situation. Everything below is still current state only.
+
+  // "up open, left blocked (wall), down open, right open"
+  var passagesAt = function (tx, ty) {
+    var parts = [];
+    for (var e = 0; e < 4; e++) {
+      var d = {};
+      setDirFromEnum(d, e);
+      var ox = tx + d.x;
+      var oy = ty + d.y;
+      if (ox < 0) ox += map.numCols;
+      else if (ox >= map.numCols) ox -= map.numCols;
+      parts.push(
+        DIR_NAMES[e] + (map.isFloorTile(ox, oy) ? " open" : " blocked (wall)"),
+      );
+    }
+    return parts.join(", ");
+  };
+
+  // "2 tiles to your left" / "3 tiles above you and 1 tile to your right"
+  var offsetWords = function (dx, dy) {
+    if (dx == 0 && dy == 0) return "on your tile";
+    var parts = [];
+    if (dy != 0)
+      parts.push(
+        Math.abs(dy) +
+          " tile" +
+          (Math.abs(dy) == 1 ? "" : "s") +
+          (dy < 0 ? " above you" : " below you"),
+      );
+    if (dx != 0)
+      parts.push(
+        Math.abs(dx) +
+          " tile" +
+          (Math.abs(dx) == 1 ? "" : "s") +
+          (dx > 0 ? " to your right" : " to your left"),
+      );
+    return parts.join(" and ");
+  };
+
+  // Is the ghost on pacman's path — same lane, ahead, no wall/corner in
+  // between (walking the heading lane up to 8 tiles)? Returns the distance in
+  // tiles, or 0. (Used to phrase the ghost fact with its consequence — see
+  // statsLines: the model_probe experiments showed clef-flash acts on
+  // explicitly-stated consequences, not on bare offsets.)
+  var ghostPathDistance = function (g) {
+    var hd = {};
+    setDirFromEnum(hd, headingEnum());
+    var tx = pacman.tile.x;
+    var ty = pacman.tile.y;
+    for (var s = 1; s <= 8; s++) {
+      var nx = tx + hd.x * s;
+      var ny = ty + hd.y * s;
+      if (nx < 0) nx += map.numCols;
+      else if (nx >= map.numCols) nx -= map.numCols;
+      if (!map.isFloorTile(nx, ny)) break; // lane ends (wall/corner) before the ghost
+      if (nx == g.tile.x && ny == g.tile.y) return s;
+    }
+    return 0;
+  };
+
+  var statsLines = function (inter) {
+    var lines = [];
+    lines.push(
+      "You are '@' at x=" +
+        pacman.tile.x +
+        ", y=" +
+        pacman.tile.y +
+        ", heading " +
+        DIR_NAMES[headingEnum()] +
+        "." +
+        (pacman.stopped
+          ? " You are STOPPED: you are pressed against the wall ahead and will not move until you turn."
+          : ""),
+    );
+    lines.push(
+      "Passages from your tile: " +
+        passagesAt(pacman.tile.x, pacman.tile.y) +
+        ".",
+    );
+    lines.push(
+      "Level " +
+        level +
+        ", score " +
+        getScore() +
+        ", " +
+        map.dotsLeft() +
+        " dots left. Ghosts kill you on touch unless frightened.",
+    );
+    lines.push(
+      "Ghost mode: " +
+        (ghostCommander.getCommand() == GHOST_CMD_CHASE
+          ? "chase — the hunting ghosts are coming for you"
+          : "scatter — the hunting ghosts head to their corners") +
+        ".",
+    );
+    for (var i = 0; i < 4; i++) {
+      var g = ghosts[i];
+      var dx = wrapDx(g.tile.x);
+      var dy = g.tile.y - pacman.tile.y;
+      var stateDesc = g.scared
+        ? "frightened and edible (you can eat it)"
+        : g.mode == GHOST_GOING_HOME || g.mode == GHOST_ENTERING_HOME
+          ? "eaten, heading home (harmless)"
+          : g.mode == GHOST_OUTSIDE
+            ? "hunting you (deadly on touch)"
+            : "inside the ghost house (harmless for now)";
+      var hunting = !g.scared && g.mode == GHOST_OUTSIDE;
+      var pathDist = hunting ? ghostPathDistance(g) : 0;
+      if (pathDist) {
+        var side =
+          dy == 0
+            ? dx < 0
+              ? "to your left"
+              : dx > 0
+                ? "to your right"
+                : "ahead of you"
+            : dx == 0
+              ? dy < 0
+                ? "above you"
+                : "below you"
+              : offsetWords(dx, dy);
+        lines.push(
+          g.name +
+            " is hunting you and is directly in your path, " +
+            pathDist +
+            " tile" +
+            (pathDist == 1 ? "" : "s") +
+            " ahead of you (" +
+            side +
+            "); continuing straight ahead leads straight into " +
+            (g.name == "blinky" ? "him" : "her") +
+            ".",
+        );
+      } else {
+        lines.push(
+          g.name +
+            " is " +
+            stateDesc +
+            " and is " +
+            offsetWords(dx, dy) +
+            ", heading " +
+            DIR_NAMES[g.dirEnum] +
+            ".",
+        );
+      }
+    }
+    lines.push(
+      "Your next intersection X is at x=" +
+        inter.tile.x +
+        ", y=" +
+        inter.tile.y +
+        " — " +
+        (inter.steps == 0
+          ? "your own tile"
+          : inter.steps +
+            " tile" +
+            (inter.steps == 1 ? "" : "s") +
+            " ahead along your heading") +
+        ". Passages from X: " +
+        passagesAt(inter.tile.x, inter.tile.y) +
+        ".",
+    );
+    if (energizer.isActive()) {
+      lines.push(
+        "An energizer is active: the hunting ghosts are frightened and edible until it expires.",
+      );
+    }
+    return lines;
+  };
+
+  // ---- decision history (kept by 04-controller) ----------------------------
+  //
+  // Sent with every request: the last settings.history decisions, each with
+  // its timestamp (seconds from the start of the game) and whether the
+  // action went through — so the model can judge its own latency and plan.
+
+  var historyCount = function () {
+    var n = pacmanAgent.settings.history;
+    if (!(n > 0)) n = 4;
+    return Math.max(1, Math.min(10, Math.round(n)));
+  };
+
+  var historyLines = function () {
+    var h = pacmanAgent.history || [];
+    var n = historyCount();
+    var tail = h.length > n ? h.slice(h.length - n) : h;
+    var lines = [
+      "Your recent decisions (t = seconds from the start of the game; newest last;",
+      "'went through' = the action actually happened):",
+    ];
+    if (!tail.length) {
+      lines.push("- none yet");
+      return lines;
+    }
+    for (var i = 0; i < tail.length; i++) {
+      var e = tail[i];
+      lines.push(
+        "- t=" +
+          e.t.toFixed(1) +
+          "s: " +
+          e.dir +
+          " — " +
+          (e.kind == "turn"
+            ? "turn for the next intersection, " +
+              pacmanAgent.describeDecisionOutcome(e.outcome)
+            : e.kind + ", applied instantly (went through)"),
+      );
+    }
+    return lines;
+  };
+
+  // ---- text mode: prose facts + history (NO maze) ------------------------
+  //
+  // The maze was removed deliberately: the model_probe experiments showed
+  // clef-flash answers identically with the maze present, deleted, or turned
+  // into garbage — it grounds on the sentences, and the maze bytes were pure
+  // latency (state size is the latency; see README 'Reducing latency').
+
+  pacmanAgent.buildTextState = function (inter) {
+    var lines = [];
+    lines.push("PAC-MAN. Facts about the game follow as plain sentences.");
+    var stats = statsLines(inter);
+    for (var s = 0; s < stats.length; s++) lines.push(stats[s]);
+
+    lines.push("");
+    var hist = historyLines();
+    for (var e = 0; e < hist.length; e++) lines.push(hist[e]);
+
+    return lines.join("\n");
+  };
+
+  // ---- shot mode: annotated screenshot ------------------------------------
+  //
+  // Copies the game canvas to a small offscreen canvas, labels the grid
+  // coordinates, and marks the intersection, so the image can be read like
+  // the text map. Map pixel mx lands at canvas pixel
+  // (mapMargin + mapPad + mx) * renderScale (see renderers.js).
+  // settings.shotWidth bounds the image size — vision tokens scale with
+  // pixels, so this bounds the request latency too.
+
+  pacmanAgent.captureScreenshot = function (inter) {
+    var canvas = document.getElementById("canvas");
+    if (!canvas || !canvas.width || !canvas.height) return null;
+    var off = document.createElement("canvas");
+    var w = Math.max(112, Math.min(896, pacmanAgent.settings.shotWidth || 320));
+    off.width = w;
+    off.height = Math.max(1, Math.round((canvas.height * w) / canvas.width));
+    var octx = off.getContext("2d");
+    octx.drawImage(canvas, 0, 0, off.width, off.height);
+
+    var s = renderScale || 1;
+    var f = off.width / canvas.width; // canvas px -> annotation px
+    var toX = function (mx) {
+      return (mapMargin + mapPad + mx) * s * f;
+    };
+    var toY = function (my) {
+      return (mapMargin + mapPad + my) * s * f;
+    };
+
+    var fontPx = Math.max(8, Math.round(3 * s * f * 2));
+    octx.font = fontPx + "px monospace";
+    octx.fillStyle = "#fff";
+    octx.textAlign = "center";
+    octx.textBaseline = "bottom";
+
+    // column labels above the maze
+    for (var x = 0; x < map.numCols; x += 4) {
+      octx.fillText(String(x), toX(x * tileSize + midTile.x), toY(-tileSize));
+    }
+    // row labels left of the maze
+    octx.textAlign = "right";
+    for (var y = 0; y < map.numRows; y += 4) {
+      octx.fillText(String(y), toX(-tileSize), toY(y * tileSize + midTile.y));
+    }
+
+    // mark the intersection with a red square
+    if (inter) {
+      var cx = toX(inter.tile.x * tileSize + midTile.x);
+      var cy = toY(inter.tile.y * tileSize + midTile.y);
+      var half = Math.max(2, Math.round((tileSize * s * f) / 2));
+      octx.strokeStyle = "#FF0000";
+      octx.lineWidth = Math.max(1, Math.round(s * f));
+      octx.strokeRect(cx - half, cy - half, half * 2, half * 2);
+    }
+
+    return {
+      image: off.toDataURL("image/png").replace(/^data:image\/png;base64,/, ""),
+      width: off.width,
+      height: off.height,
+    };
+  };
+
+  // ---- the question ------------------------------------------------------
+
+  pacmanAgent.buildQuestions = function (inter) {
+    var heading = headingEnum();
+    var lat = Math.round(pacmanAgent.latencyEwmaMs || 0);
+    var criteria = {};
+    for (var i = 0; i < 4; i++) {
+      var name = DIR_NAMES[i];
+      if (i == heading)
+        criteria[name] =
+          "keep going straight ahead (your current heading) — applied immediately";
+      else if (i == rotateAboutFace(heading))
+        criteria[name] =
+          "u-turn: reverse and travel " + name + " — applied immediately";
+      else
+        criteria[name] =
+          "turn " +
+          name +
+          " — held and applied at the next intersection you reach (consumed there even if it has no " +
+          name +
+          " opening; replaced by any newer decision)";
+    }
+    var latencySentence = lat
+      ? "Your answers have been arriving about " +
+        lat +
+        " ms after you see the state, and Pac-Man keeps moving the whole time — decide for the intersections he is APPROACHING, planning several turns ahead, not for the exact state shown. "
+      : "Your answers arrive after a delay and Pac-Man keeps moving meanwhile — decide for the intersections he is APPROACHING, planning several turns ahead, not for the exact state shown. ";
+    return {
+      direction: {
+        type: "choice",
+        instructions:
+          "You are Pac-Man in a live game. " +
+          latencySentence +
+          "Eat pellets to clear the level, avoid ghosts (they kill on touch unless frightened), and don't corner yourself. Which direction should Pac-Man travel?",
+        criteria: criteria,
+      },
+    };
+  };
+
+  // ---- the request -------------------------------------------------------
+
+  pacmanAgent.buildRequest = function () {
+    if (!map) return null;
+    var inter = pacmanAgent.findNextIntersection();
+    if (!inter || inter.options.length == 0) return null;
+
+    var provider = pacmanAgent.getProvider();
+    var wantShot = pacmanAgent.settings.stateMode == "shot";
+    if (wantShot && !provider.vision) {
+      if (!pacmanAgent._noticedNoVision) {
+        pacmanAgent._noticedNoVision = true;
+        pacmanAgent.log(
+          "the " +
+            pacmanAgent.settings.provider +
+            " provider does not accept images — using the text state instead",
+        );
+      }
+      wantShot = false;
+    }
+
+    var questions = pacmanAgent.buildQuestions(inter);
+
+    if (wantShot) {
+      var shot = pacmanAgent.captureScreenshot(inter);
+      if (shot) {
+        var s = [
+          "PAC-MAN, seen from above in the attached screenshot. The red square marks your next intersection (X).",
+          "Facts about the game follow as plain sentences.",
+        ];
+        s = s.concat(statsLines(inter));
+        s.push("");
+        s = s.concat(historyLines());
+        return {
+          state: s.join("\n"),
+          questions: questions,
+          images: [shot.image],
+        };
+      }
+      // else fall through to text
+    }
+
+    return {
+      state: pacmanAgent.buildTextState(inter),
+      questions: questions,
+      images: null,
+    };
+  };
+})();
+//@line 1 "agent/04-controller.js"
+//////////////////////////////////////////////////////////////////////////////////////
+// Pac-Man AI Agent — 04 Controller
+//
+// Real-time decision loop — ONE prompt in flight at a time (a poll tick that
+// fires while an answer is still pending is skipped; requests never pile up):
+//
+//   - a fixed-rate poller (default 10 Hz — pacmanAgent.settings.hz) sends the
+//     CURRENT state and one 'direction' question;
+//   - each answer is applied through the game's own input layer
+//     (pacman.setInputDir), exactly like a key press:
+//       • straight or u-turn → applied instantly;
+//       • a perpendicular turn → HELD: the game turns Pac-Man at the next
+//         intersection where that direction is open, and the decision is
+//         consumed there (dropped if it had no such opening) — or replaced
+//         by whichever newer decision lands first;
+//   - the state sent to the model includes the recent decision history
+//     (timestamped in seconds from the start of the game, and whether each
+//     action went through), so the model can judge its own latency and plan.
+//
+// Two decision modes (pacmanAgent.settings.mode, key 'm', ?mode=…):
+//
+//   realtime — the poller ticks on the WALL clock and never touches the game;
+//     answers land late (the model is told the measured latency and asked to
+//     plan ahead). If the provider is slow or fails, Pac-Man just keeps
+//     traveling on the last decision — nothing pauses or slows.
+//
+//   fixed — the poll boundary is counted in GAME frames (10 Hz = every 6
+//     steer() calls, i.e. every 0.1s of play), and at each boundary the game is
+//     FROZEN (executive.togglePause: state updates stop, drawing continues)
+//     while the prompt is in flight, and thawed the moment the answer lands.
+//     A decision therefore never arrives late in game time — the wall-clock
+//     latency is paid as a visible freeze instead. Polling still skips while
+//     the game is user-paused, in a menu, seeking (practice rewind), between
+//     rounds, or dead.
+//
+// The freeze is released only while the agent still owns the pause: the
+// pause flag can change hands mid-flight (the End key, the in-game menu, or
+// switchState's auto-unpause all toggle it), and then it is theirs — the
+// agent never toggles a pause it did not set (see pauseVersion/holdVersion).
+
+(function () {
+  var running = false;
+  var inFlight = 0; // 0 or 1 — single-flight by design
+  var flightStart = 0; // wall-clock ms the in-flight request started
+  var intervalId = 0;
+  var lastErrorAt = -Infinity; // so the first error is always logged
+  var decisions = 0;
+  var errors = 0;
+  var requests = 0; // requests actually sent (skipped ticks don't count)
+  var lastChoice = null; // { choice, kind, probability, confidence, ms, num }
+
+  // ---- game clock (used for the history timestamps) ----------------------
+  // The VCR only records in practice mode, so it can't be the clock. This
+  // counts pac-man's own steer() calls instead — exactly one per frame of
+  // active play (Actor.update), i.e. only while the game actually runs:
+  // pauses, menus and cutscenes are excluded. Seconds from the start of the
+  // agent's run ≈ seconds from the start of the game (start it at the ready
+  // screen and it is the same thing).
+  var playFrames = 0;
+  pacmanAgent.gameSeconds = function () {
+    return playFrames / 60;
+  };
+
+  // ---- decision history (03 sends the tail of this to the model) ---------
+
+  var HISTORY_KEPT = 12; // kept locally; settings.history are SENT
+  var history = [];
+  pacmanAgent.history = history;
+
+  // what happened to a held turn decision (wording sent to the model)
+  var OUTCOMES = {
+    held: "still held — no intersection reached yet",
+    executed: "went through (turn made)",
+    walled:
+      "did NOT go through (no such opening at the intersection — consumed there)",
+    replaced: "did NOT go through (a later decision replaced it first)",
+    reset: "did NOT go through (game inputs were reset)",
+  };
+  pacmanAgent.describeDecisionOutcome = function (outcome) {
+    return OUTCOMES[outcome] || String(outcome || "");
+  };
+
+  // ---- the held turn ------------------------------------------------------
+
+  var pending = null; // { dirEnum, fromX, fromY, entry } while a turn is held
+
+  var settle = function (p, outcome) {
+    p.entry.outcome = outcome;
+    if (pending === p) {
+      pending = null;
+      pacmanAgent.pendingDecision = null;
+    }
+  };
+
+  // does this tile give pac-man (heading 'heading') a choice beyond going on?
+  // (same test the intersection walk in 03 uses)
+  var isDecisionTile = function (tx, ty, heading) {
+    var openings = 0;
+    for (var e = 0; e < 4; e++) {
+      if (e == rotateAboutFace(heading)) continue;
+      var d = {};
+      setDirFromEnum(d, e);
+      var ox = tx + d.x;
+      var oy = ty + d.y;
+      if (ox < 0) ox += map.numCols;
+      else if (ox >= map.numCols) ox -= map.numCols;
+      if (map.isFloorTile(ox, oy)) openings++;
+    }
+    return openings > 1;
+  };
+
+  // Consume the held turn. Runs once per game frame (see installHook): a
+  // 10 Hz poller can skip tiles — pac-man covers ~1 tile per tick — so the
+  // "reached the next intersection" test has to be per-frame, not per-poll.
+  var consumePending = function () {
+    if (!pending) return;
+    var p = pending;
+    // the game reset its inputs (new round): nothing to hold on to
+    if (pacman.inputDirEnum == undefined) {
+      settle(p, "reset");
+      return;
+    }
+    // the turn went through: the game steered pac-man onto the decision's heading
+    if (pacman.dirEnum == p.dirEnum) {
+      settle(p, "executed");
+      pacman.clearInputDir(p.dirEnum); // release the "held key"
+      return;
+    }
+    // pac-man moved off the decision tile and is standing on an intersection
+    // where the turn was NOT possible: the decision is consumed, per the rules
+    if (
+      (pacman.tile.x != p.fromX || pacman.tile.y != p.fromY) &&
+      isDecisionTile(pacman.tile.x, pacman.tile.y, pacman.dirEnum)
+    ) {
+      settle(p, "walled");
+      pacman.clearInputDir(p.dirEnum);
+    }
+  };
+
+  // Wrap the player's own steer() (called once per frame from Actor.update)
+  // so consumePending runs every frame. The wrapper only reads state and
+  // releases the held input on consumption — it cannot affect the game
+  // otherwise, and it is never uninstalled (it no-ops without a pending).
+  // In fixed mode it also counts out the poll boundary in game frames and
+  // fires the freeze-and-ask cycle there (see fixedPoll).
+  var hookInstalled = false;
+  var installHook = function () {
+    if (hookInstalled || typeof pacman == "undefined") return;
+    if (typeof pacman.steer != "function") return;
+    hookInstalled = true;
+    var orig = pacman.steer;
+    pacman.steer = function () {
+      playFrames++;
+      var r = orig.apply(this, arguments);
+      try {
+        consumePending();
+      } catch (e) {
+        /* never let the agent break a frame */
+      }
+      try {
+        fixedPoll(false);
+      } catch (e) {
+        /* never let the agent break a frame */
+      }
+      return r;
+    };
+  };
+
+  // ---- fixed mode: freeze the game while a decision is in flight ----------
+
+  var agentHold = false; // we froze the game for a fixed-rate poll
+  var holdStart = 0; // wall-clock ms the freeze started
+  var lastHoldMs = 0; // wall-clock ms the last freeze lasted
+  var lastPollT = 0; // game seconds the last fixed-rate poll fired at
+
+  // Every executive.togglePause() call is counted so the agent can tell
+  // whether the pause flag changed hands while a freeze was out (the End
+  // key, the in-game menu's new game, and switchState's auto-unpause all
+  // toggle it). If it did, the game already resumed (or re-froze on the
+  // user's behalf) and the agent must NOT toggle it again — otherwise a
+  // stale release would un-pause a pause the user meant to keep.
+  var pauseVersion = 0;
+  var holdVersion = -1; // pauseVersion right after OUR togglePause
+  var executivePatched = false;
+  var patchExecutive = function () {
+    if (executivePatched) return;
+    if (
+      typeof executive == "undefined" ||
+      typeof executive.togglePause != "function"
+    )
+      return;
+    executivePatched = true;
+    var orig = executive.togglePause;
+    executive.togglePause = function () {
+      pauseVersion++;
+      return orig.call(executive);
+    };
+  };
+
+  var pauseForPoll = function () {
+    if (agentHold) return;
+    agentHold = true;
+    holdStart = Date.now();
+    executive.togglePause(); // freezes state updates; drawing continues
+    holdVersion = pauseVersion;
+  };
+
+  // thaw after a fixed-rate poll — only if the pause is still ours
+  var releaseHold = function () {
+    if (!agentHold) return;
+    agentHold = false;
+    lastHoldMs = Date.now() - holdStart;
+    if (pauseVersion == holdVersion && executive.isPaused()) {
+      executive.togglePause();
+    }
+  };
+
+  var isFixed = function () {
+    return pacmanAgent.settings.mode == "fixed";
+  };
+
+  // The console is fed from here; 06-ui.js replaces these to also feed the
+  // log panel (it captures the originals before replacing).
+  var baseLog = pacmanAgent.log;
+  pacmanAgent.logDecision = function (d) {
+    if (!pacmanAgent.settings.verbose) return;
+    baseLog(
+      "decision: '%s' (%s, p=%s, confidence=%s) in %dms (ewma %dms) — #%d",
+      d.choice,
+      d.kind,
+      d.probability == null ? "?" : d.probability.toFixed(2),
+      d.confidence == null ? "?" : d.confidence.toFixed(2),
+      d.ms,
+      pacmanAgent.latencyEwmaMs || 0,
+      d.num,
+    );
+  };
+  pacmanAgent.logError = function (msg) {
+    baseLog(msg);
+  };
+
+  var canPoll = function () {
+    return (
+      typeof state != "undefined" &&
+      state == playState &&
+      !executive.isPaused() &&
+      !inGameMenu.isOpen() &&
+      !vcr.isSeeking()
+    );
+  };
+
+  // error logging, throttled to at most one line every 10 seconds
+  var throttledLog = function (msg) {
+    var now = Date.now();
+    if (now - lastErrorAt > 10000) {
+      lastErrorAt = now;
+      pacmanAgent.logError(msg);
+    }
+  };
+
+  // ---- apply an answer -----------------------------------------------------
+
+  var applyAnswer = function (res) {
+    if (!running) return; // an answer landing after stop() is not applied
+    var ans = res.answers && res.answers.direction;
+    if (!ans || ans.choice == undefined) {
+      throttledLog(
+        "response had no usable direction answer (" +
+          (errors + 1) +
+          " so far): " +
+          JSON.stringify(res.raw).slice(0, 120),
+      );
+      return;
+    }
+    var D = pacmanAgent.dirEnumByName[ans.choice];
+    if (D == undefined) {
+      throttledLog("model chose an unknown direction '" + ans.choice + "'");
+      return;
+    }
+    decisions++;
+
+    var heading =
+      pacman.dirEnum != undefined ? pacman.dirEnum : pacman.nextDirEnum;
+    if (heading == undefined) heading = DIR_LEFT;
+    var kind =
+      D == heading
+        ? "straight"
+        : D == rotateAboutFace(heading)
+          ? "uturn"
+          : "turn";
+
+    // a still-held turn that never reached an intersection: replaced now
+    if (pending) settle(pending, "replaced");
+
+    var entry = {
+      t: pacmanAgent.gameSeconds(),
+      dir: ans.choice,
+      kind: kind,
+      outcome: kind == "turn" ? "held" : "instant",
+    };
+    history.push(entry);
+    if (history.length > HISTORY_KEPT) history.shift();
+
+    lastChoice = {
+      num: decisions,
+      choice: ans.choice,
+      kind: kind,
+      probability:
+        ans.probabilities && ans.probabilities[ans.choice] != undefined
+          ? ans.probabilities[ans.choice]
+          : null,
+      confidence: ans.confidence != undefined ? ans.confidence : null,
+      ms: res.ms,
+    };
+
+    if (kind == "turn") {
+      pending = {
+        dirEnum: D,
+        fromX: pacman.tile.x,
+        fromY: pacman.tile.y,
+        entry: entry,
+      };
+      pacmanAgent.pendingDecision = { dir: ans.choice, sinceT: entry.t };
+    } else {
+      pacmanAgent.pendingDecision = null;
+    }
+
+    if (typeof state != "undefined" && state == playState) {
+      // through the game's own steering, exactly like the arrow keys:
+      // straight/u-turn take effect immediately; the game holds a turn until
+      // it can be made (and consumePending consumes it at the next
+      // intersection, even when it can't be made there)
+      pacman.setInputDir(D);
+    }
+    pacmanAgent.logDecision(lastChoice);
+  };
+
+  // ---- the poll -------------------------------------------------------------
+
+  // send one request; onDone runs when the answer (or the failure) landed —
+  // fixed mode thaws the game there. Single-flight: poll/fixedPoll both
+  // check inFlight first, so at most ONE prompt is ever out.
+  var sendNow = function (onDone) {
+    var req;
+    try {
+      req = pacmanAgent.buildRequest();
+    } catch (e) {
+      throttledLog("failed to build the request: " + ((e && e.message) || e));
+      if (onDone) onDone();
+      return;
+    }
+    if (!req) {
+      if (onDone) onDone();
+      return;
+    }
+    inFlight = 1;
+    flightStart = Date.now();
+    requests++;
+    // let the UI panel show exactly what the model was asked
+    if (pacmanAgent.onViewRequest) {
+      pacmanAgent.onViewRequest(req.state, req.questions, req.images);
+    }
+    pacmanAgent
+      .ask(req.state, req.questions, req.images)
+      .then(function (res) {
+        inFlight = 0;
+        flightStart = 0;
+        if (pacmanAgent.onViewAnswer) {
+          pacmanAgent.onViewAnswer(res.raw);
+        }
+        applyAnswer(res);
+        if (onDone) onDone();
+      })
+      .catch(function (err) {
+        inFlight = 0;
+        flightStart = 0;
+        errors++;
+        throttledLog(
+          "request failed (" +
+            errors +
+            " total): " +
+            ((err && err.message) || err),
+        );
+        if (onDone) onDone();
+      });
+  };
+
+  // realtime tick — wall-clock timer; the answer is applied whenever it
+  // lands, the game never stops
+  var poll = function () {
+    if (!running) return;
+    if (inFlight > 0) return; // ONE prompt in flight — never more
+    if (!canPoll()) return;
+    sendNow(null);
+  };
+
+  // fixed-mode tick — called once per game frame from the steer hook. When
+  // a full poll period of PLAY time has elapsed, freeze the game, ask, and
+  // thaw on the answer: the decision always lands on time in game terms.
+  // force=true skips the boundary check (start of a run).
+  var fixedPoll = function (force) {
+    if (!isFixed() || !running) return;
+    if (inFlight > 0 || agentHold) return;
+    if (!canPoll()) return;
+    var t = playFrames / 60;
+    if (!force && t - lastPollT + 1e-9 < 1 / pacmanAgent.settings.hz) return;
+    lastPollT = t;
+    pauseForPoll();
+    sendNow(releaseHold);
+  };
+
+  var setIntervalRate = function () {
+    if (intervalId) clearInterval(intervalId);
+    intervalId = 0;
+    if (!running || !isFixed()) return; // fixed mode has no wall-clock timer
+    intervalId = setInterval(poll, Math.round(1000 / pacmanAgent.settings.hz));
+  };
+
+  // ---- start / stop ----------------------------------------------------------
+
+  pacmanAgent.start = function () {
+    if (running) return;
+    running = true;
+    installHook();
+    patchExecutive();
+    decisions = 0;
+    errors = 0;
+    requests = 0;
+    lastChoice = null;
+    pending = null;
+    pacmanAgent.pendingDecision = null;
+    inFlight = 0;
+    flightStart = 0;
+    agentHold = false;
+    lastHoldMs = 0;
+    lastPollT = pacmanAgent.gameSeconds();
+    pacmanAgent.log("AI player started — " + pacmanAgent.describe());
+    if (isFixed())
+      fixedPoll(true); // freeze → ask → thaw, right now
+    else {
+      setIntervalRate();
+      poll(); // fire immediately
+    }
+  };
+
+  pacmanAgent.stop = function () {
+    if (!running) return;
+    running = false;
+    if (intervalId) clearInterval(intervalId);
+    intervalId = 0;
+    releaseHold(); // never leave the game frozen behind us
+    if (pending) settle(pending, "reset");
+    pending = null;
+    pacmanAgent.pendingDecision = null;
+    if (typeof pacman != "undefined") {
+      pacman.clearInputDir(undefined); // release the "held key"
+    }
+    pacmanAgent.log("AI player stopped (" + decisions + " decisions applied)");
+  };
+
+  pacmanAgent.toggle = function () {
+    if (running) pacmanAgent.stop();
+    else pacmanAgent.start();
+  };
+
+  // change the poll rate (applies immediately, persists)
+  pacmanAgent.setHz = function (hz) {
+    if (!(hz > 0)) return;
+    pacmanAgent.settings.hz = hz;
+    pacmanAgent.save();
+    if (running) setIntervalRate();
+    pacmanAgent.log("poll rate set to %d Hz", hz);
+  };
+
+  // switch the decision mode (applies immediately, persists)
+  pacmanAgent.setMode = function (mode) {
+    if (mode != "realtime" && mode != "fixed") return;
+    if (pacmanAgent.settings.mode == mode) return;
+    pacmanAgent.settings.mode = mode;
+    pacmanAgent.save();
+    if (running) {
+      if (mode == "realtime") {
+        releaseHold(); // thaw if we were holding
+        setIntervalRate();
+        poll(); // fire immediately
+      } else {
+        if (intervalId) clearInterval(intervalId);
+        intervalId = 0;
+        releaseHold();
+        lastPollT = pacmanAgent.gameSeconds(); // fresh boundary
+        fixedPoll(true); // freeze → ask → thaw, right now
+      }
+    }
+    pacmanAgent.log(
+      "decision mode → " +
+        (mode == "fixed"
+          ? "fixed rate (game freezes per decision)"
+          : "realtime (game never stops)"),
+    );
+  };
+
+  pacmanAgent.isRunning = function () {
+    return running;
+  };
+
+  pacmanAgent.status = function () {
+    var lat = pacmanAgent.latencyEwmaMs || pacmanAgent.lastLatencyMs || null;
+    var n = Math.max(
+      1,
+      Math.min(10, Math.round(pacmanAgent.settings.history || 4)),
+    );
+    return {
+      running: running,
+      busy: inFlight > 0,
+      inFlight: inFlight,
+      mode: pacmanAgent.settings.mode,
+      // fixed-mode freeze state: while holding, the game is frozen and the
+      // in-flight request's wall-clock age is the freeze cost so far
+      holding: agentHold,
+      holdMs: agentHold && holdStart ? Date.now() - holdStart : 0,
+      lastHoldMs: lastHoldMs,
+      decisions: decisions,
+      errors: errors,
+      requests: requests,
+      lastChoice: lastChoice,
+      latencyMs: pacmanAgent.lastLatencyMs,
+      latencyEwmaMs: pacmanAgent.latencyEwmaMs,
+      // latency-health inputs, consumed by 06-ui.js to warn when the model
+      // cannot keep up with the poll rate:
+      intervalMs: 1000 / pacmanAgent.settings.hz, // one poll period
+      effLatencyMs: lat, // sustained latency (ewma, falling back to last)
+      inFlightMs: inFlight > 0 && flightStart ? Date.now() - flightStart : 0, // live age of the in-flight request
+      pending: pending
+        ? {
+            dir: pacmanAgent.DIR_NAMES[pending.dirEnum],
+            sinceT: pending.entry.t,
+          }
+        : null,
+      history:
+        history.length > n
+          ? history.slice(history.length - n)
+          : history.slice(),
+      settings: pacmanAgent.settings,
+    };
+  };
+})();
+//@line 1 "agent/05-main.js"
+//////////////////////////////////////////////////////////////////////////////////////
+// Pac-Man AI Agent — 05 Wiring
+//
+// Key bindings for the AI player (registered on window directly — src/input.js
+// is not modified; these keys are unused by the game):
+//
+//   j — toggle the AI player on/off
+//   k — cycle provider (ollama → vllm → cloudflare → typesafe → custom)
+//   u — cycle the state input (text maze ↔ screenshot)
+//   h — cycle the poll rate (1 → 2 → 5 → 10 → 20 Hz)
+//   m — toggle the decision mode (realtime ↔ fixed rate)
+
+(function () {
+  var HZ_STEPS = [1, 2, 5, 10, 20];
+  var STATE_MODES = ["text", "shot"];
+
+  var cycleProvider = function () {
+    var order = pacmanAgent.providerOrder;
+    var i = order.indexOf(pacmanAgent.settings.provider);
+    pacmanAgent.settings.provider = order[(i + 1) % order.length];
+    pacmanAgent.save();
+    pacmanAgent.log("provider → " + pacmanAgent.describe());
+  };
+
+  var cycleStateMode = function () {
+    var m = STATE_MODES;
+    var i = m.indexOf(pacmanAgent.settings.stateMode);
+    pacmanAgent.settings.stateMode = m[(i + 1) % m.length];
+    pacmanAgent.save();
+    pacmanAgent.log(
+      "state input → " + (m[i] == "text" ? "text maze" : "screenshot"),
+    );
+  };
+
+  var cycleHz = function () {
+    var i = HZ_STEPS.indexOf(pacmanAgent.settings.hz);
+    pacmanAgent.setHz(HZ_STEPS[(i + 1) % HZ_STEPS.length]);
+  };
+
+  var toggleMode = function () {
+    pacmanAgent.setMode(
+      pacmanAgent.settings.mode == "fixed" ? "realtime" : "fixed",
+    );
+  };
+
+  window.addEventListener("keydown", function (e) {
+    var key = (e || window.event).keyCode;
+    if (key == 74) {
+      // J
+      pacmanAgent.toggle();
+    } else if (key == 75) {
+      // K
+      cycleProvider();
+    } else if (key == 85) {
+      // U
+      cycleStateMode();
+    } else if (key == 72) {
+      // H
+      cycleHz();
+    } else if (key == 77) {
+      // M
+      toggleMode();
+    }
+  });
+
+  window.addEventListener("load", function () {
+    pacmanAgent.log(
+      "AI player loaded — press j to start/stop it. " +
+        "keys: j on/off, k provider, u text/screenshot, h poll rate, m realtime/fixed. " +
+        pacmanAgent.describe(),
+    );
+  });
+})();
+//@line 1 "agent/06-ui.js"
+//////////////////////////////////////////////////////////////////////////////////////
+// Pac-Man AI Agent — 06 UI panel
+//
+// Layout (the game itself is untouched; this file builds all of its own DOM):
+//
+//     [ AI MODEL INPUT ]   [ game canvas ]   [ AI PLAYER ]
+//
+// The game centers its canvas by writing body.style.marginLeft (renderers.js
+// center()) — a scheme that assumes the canvas is the only thing on the page.
+// This sheet centers with flexbox on <body> instead, and resets that margin
+// with !important (which beats the game's inline style, so no timing games):
+// the canvas sits centered on the screen with a panel on each side, and the
+// panels stretch to the full window height.
+//
+// left  — everything the model is asked, all at once (no tabs): the state
+//          input toggle, the exact 'state' string, the typed 'questions', the
+//          annotated screenshot ('images', screenshot mode) and the latest
+//          answers.
+// right — the agent: status, editable poll rate, decision mode, provider,
+//          counters, the strips and the decision history. There is no log
+//          pane — the console (01-config's logger) is the log.
+
+(function () {
+  // ---------- tiny dom helper ----------
+
+  var el = function (tag, attrs, children) {
+    var node = document.createElement(tag);
+    if (attrs) {
+      for (var k in attrs) {
+        var v = attrs[k];
+        if (k == "text") node.textContent = v;
+        else if (typeof v == "function" && k.slice(0, 2) == "on") {
+          node.addEventListener(k.slice(2), v);
+        } else node.setAttribute(k, v);
+      }
+    }
+    if (children) {
+      for (var i = 0; i < children.length; i++) {
+        var c = children[i];
+        node.appendChild(typeof c == "string" ? document.createTextNode(c) : c);
+      }
+    }
+    return node;
+  };
+
+  // ---------- styles ----------
+
+  document.head.appendChild(
+    el("style", {
+      text: [
+        // center the [panel | canvas | panel] row on the screen. The !important
+        // margin reset neutralizes the game's canvas-only body.style.marginLeft
+        // (renderers.js center()) — inline styles lose to !important rules.
+        "html,body{height:100%}",
+        "body{display:flex;flex-wrap:wrap;justify-content:center;align-items:stretch;background:#000}",
+        "body{margin:0 !important}",
+        // stray font-preload spacer div in index.htm; would sit in the flex row
+        "body>div[style*='ArcadeR']{display:none}",
+        // keep the canvas at its own size (don't flex-shrink or stretch it)
+        "#canvas{flex:none;align-self:flex-start}",
+        // The panels: exactly the viewport height (height:100% of body). This
+        // is the load-bearing rule — flex items have an automatic content-based
+        // minimum (min-height:auto), so without a definite height a growing log
+        // would push the panel past the window and make the page scroll.
+        // min-height:0 lets the panel shrink; box-sizing keeps padding/border
+        // inside the 100% so nothing overflows by a few pixels.
+        ".ag-side{flex:none;width:304px;margin:0 6px;height:100%;min-height:0;box-sizing:border-box;" +
+          "display:flex;flex-direction:column;text-align:left;color:#c3cad6;font:11px/1.5 monospace}",
+        ".ag-side *{box-sizing:border-box}",
+        ".ag-sec{flex:1;display:flex;flex-direction:column;min-height:0;" +
+          "border:1px solid #262b33;border-radius:6px;background:#0b0d11;overflow:hidden}",
+        ".ag-head{flex:none;padding:6px 10px;font-size:11px;letter-spacing:.14em;color:#8cf;" +
+          "border-bottom:1px solid #262b33;background:#141821}",
+        ".ag-body{flex:1;display:flex;flex-direction:column;min-height:0;padding:8px;gap:7px;overflow:hidden}",
+        ".ag-lab{flex:none;color:#5a6270;font-size:10px;letter-spacing:.06em}",
+        ".ag-row{flex:none;display:flex;align-items:center;gap:6px;flex-wrap:wrap}",
+        ".ag-row label{color:#8b93a3}",
+        ".ag-row b{color:#fff;font-weight:normal}",
+        ".ag-grow{flex:1}",
+        // segmented toggle (text / screenshot, realtime / fixed)
+        ".ag-seg{display:flex;border:1px solid #333a46;border-radius:4px;overflow:hidden}",
+        ".ag-seg div{flex:1;text-align:center;padding:3px 0;cursor:pointer;color:#67717f}",
+        ".ag-seg div.sel{background:#1d2f3f;color:#9df}",
+        ".ag-row>.ag-seg{flex:1}",
+        // controls
+        ".ag-btn{cursor:pointer;background:#1b2026;color:#cdd;border:1px solid #33404e;" +
+          "border-radius:4px;padding:3px 10px;font:inherit}",
+        ".ag-btn:hover{background:#252b33;color:#fff}",
+        ".ag-btn.primary{background:#20323a;border-color:#37525e;color:#adf}",
+        ".ag-sel{flex:1;background:#0b0d10;color:#cdd;border:1px solid #33404e;border-radius:4px;" +
+          "padding:3px 6px;font:inherit}",
+        ".ag-inp{width:4.5em;background:#0b0d10;color:#cdd;border:1px solid #33404e;border-radius:4px;" +
+          "padding:3px 6px;font:inherit;text-align:right;-moz-appearance:textfield}",
+        ".ag-inp::-webkit-outer-spin-button,.ag-inp::-webkit-inner-spin-button{display:none}",
+        // status dot
+        ".ag-dot{flex:none;width:9px;height:9px;border-radius:50%;background:#444;margin-right:6px}",
+        ".ag-dot.on{background:#39c239;box-shadow:0 0 6px #39c239}",
+        ".ag-dot.busy{background:#d8b53f;box-shadow:0 0 6px #d8b53f}",
+        ".ag-dot.frozen{background:#5cb3ff;box-shadow:0 0 6px #5cb3ff}",
+        ".ag-dot.err{background:#d34848;box-shadow:0 0 6px #d34848}",
+        // counters grid
+        ".ag-grid{display:grid;grid-template-columns:1fr 1fr;gap:3px 12px}",
+        ".ag-cell{display:flex;justify-content:space-between}",
+        ".ag-cell .k{color:#68717f}",
+        ".ag-cell .v{color:#fff}",
+        // last-choice strip — fixed height, one line: long text ellipsizes,
+        // the box never resizes with its content
+        ".ag-last{display:flex;justify-content:space-between;align-items:baseline;" +
+          "border:1px solid #1c2a1c;background:#0c1710;border-radius:4px;padding:4px 8px;" +
+          "height:27px;white-space:nowrap;overflow:hidden}",
+        ".ag-last b{color:#8f8;flex:none}",
+        ".ag-last .dim{color:#586858;min-width:0;overflow:hidden;text-overflow:ellipsis}",
+        // latency health strip — warns when the model cannot keep up with the
+        // poll rate. Fixed height: exactly two lines (main + sub), each
+        // nowrap+ellipsis — text changes never resize the strip
+        ".ag-lat{flex:none;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;border-radius:4px;" +
+          "padding:4px 8px;background:#0a0e13;border:1px solid #131a22;color:#68717f;height:42px;overflow:hidden}",
+        ".ag-lat .led{flex:none;width:8px;height:8px;border-radius:50%;background:#2c3440;align-self:center}",
+        ".ag-lat b{color:#dfe6f0;font-weight:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}",
+        ".ag-lat .sub{flex-basis:100%;color:#58626f;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+        ".ag-lat.ok{background:#0c1710;border-color:#1c2a1c;color:#7f997f}",
+        ".ag-lat.ok .led{background:#39c239;box-shadow:0 0 5px #39c239}",
+        ".ag-lat.ok .sub{color:#4d6b4d}",
+        ".ag-lat.warn{background:#151208;border-color:#2b2410;color:#c7b58a}",
+        ".ag-lat.warn .led{background:#d8b53f;box-shadow:0 0 5px #d8b53f}",
+        ".ag-lat.warn .sub{color:#8a7a4d}",
+        ".ag-lat.over{background:#170c0c;border-color:#3a1a1a;color:#f0a0a0;" +
+          "animation:agpulse 1.4s ease-in-out infinite}",
+        ".ag-lat.over b{color:#ffb3b3}",
+        ".ag-lat.over .led{background:#d34848;box-shadow:0 0 6px #d34848}",
+        ".ag-lat.over .sub{color:#c98080}",
+        "@keyframes agpulse{0%,100%{box-shadow:0 0 0 0 rgba(211,72,72,0)}" +
+          "50%{box-shadow:0 0 0 3px rgba(211,72,72,.35)}",
+        // held-turn strip ("holding left since t=12.8s …") — same shape as the
+        // last-choice strip, different tint
+        ".ag-hold{background:#0c1218;border-color:#1c2730}",
+        ".ag-hold b{color:#adf}",
+        ".ag-hold .dim{color:#586858}",
+        // decision-history box: fills the panel's leftover vertical space
+        // (never resizing with its text), scrolls silently if long — the
+        // tail it shows is exactly what gets sent to the model
+        ".ag-hist{flex:1 1 88px;min-height:88px;scrollbar-width:thin}",
+        ".ag-hist::-webkit-scrollbar{width:8px}",
+        ".ag-hist::-webkit-scrollbar-thumb{background:#22272f;border-radius:4px}",
+        // content boxes: everything shown at once; scroll silently if unavoidable
+        ".ag-pre{background:#06070a;border:1px solid #191d24;border-radius:4px;padding:6px;margin:0;" +
+          "white-space:pre-wrap;word-break:break-word;overflow:auto;font-size:10px;line-height:1.4;" +
+          "color:#9fb0c0;scrollbar-width:none}",
+        ".ag-pre::-webkit-scrollbar{display:none}",
+        ".ag-state{flex:1 1 auto;min-height:120px}",
+        // fixed heights: content scrolls inside (scrollbars stay hidden) —
+        // the questions/answers boxes never resize with their text, so the
+        // left-panel layout cannot jump while playing
+        ".ag-q{flex:none;height:150px}",
+        ".ag-a{flex:none;height:72px}",
+        ".ag-shot{display:flex;justify-content:center;background:#06070a;border:1px solid #191d24;" +
+          "border-radius:4px;overflow:hidden;padding:4px}",
+        ".ag-shot img{max-width:100%;max-height:190px;image-rendering:pixelated}",
+      ].join(""),
+    }),
+  );
+
+  // ---------- panel skeleton ----------
+
+  var mkPanel = function (title) {
+    var body = el("div", { class: "ag-body" });
+    var root = el("div", { class: "ag-side" }, [
+      el("div", { class: "ag-sec" }, [
+        el("div", { class: "ag-head", text: title }),
+        body,
+      ]),
+    ]);
+    return { root: root, body: body };
+  };
+
+  var lab = function (t) {
+    return el("div", { class: "ag-lab", text: t });
+  };
+
+  // ---------- left panel: everything sent to the model ----------
+
+  var left = mkPanel("AI MODEL INPUT");
+
+  var segText = el("div", {
+    text: "text maze",
+    onclick: function () {
+      setStateMode("text");
+    },
+  });
+  var segShot = el("div", {
+    text: "screenshot",
+    onclick: function () {
+      setStateMode("shot");
+    },
+  });
+  var setStateMode = function (mode) {
+    pacmanAgent.settings.stateMode = mode;
+    pacmanAgent.save();
+    pacmanAgent.log(
+      "state input → " + (mode == "text" ? "text maze" : "screenshot"),
+    );
+    refreshSeg();
+  };
+
+  var statePre = el("pre", { class: "ag-pre ag-state" });
+  var questPre = el("pre", { class: "ag-pre ag-q" });
+  var shotImg = el("img");
+  var shotBox = el("div", { class: "ag-shot" }, [shotImg]);
+  var shotLab = lab("annotated screenshot sent to the model ('images')");
+  var ansPre = el("pre", { class: "ag-pre ag-a" });
+
+  left.body.appendChild(lab("state input"));
+  left.body.appendChild(el("div", { class: "ag-seg" }, [segText, segShot]));
+  left.body.appendChild(lab("state sent to the model ('state')"));
+  left.body.appendChild(statePre);
+  left.body.appendChild(lab("typed questions ('questions')"));
+  left.body.appendChild(questPre);
+  left.body.appendChild(shotLab);
+  left.body.appendChild(shotBox);
+  left.body.appendChild(lab("latest answers"));
+  left.body.appendChild(ansPre);
+
+  // ---- formatters (compact, readable — not raw JSON) ----
+
+  var pct = function (v) {
+    return v == null ? "?" : (v * 100).toFixed(1) + "%";
+  };
+  var pad = function (s, n) {
+    s = String(s);
+    while (s.length < n) s += " ";
+    return s;
+  };
+
+  var fmtQuestions = function (q) {
+    if (!q) return "(nothing yet — start the agent)";
+    var out = [];
+    for (var id in q) {
+      var que = q[id];
+      out.push("▸ " + id + " — " + que.type);
+      if (que.instructions)
+        out.push("  " + que.instructions.replace(/\s+/g, " "));
+      if (que.criteria) {
+        if (que.criteria instanceof Array) {
+          for (var i = 0; i < que.criteria.length; i++) {
+            out.push("  " + i + ". " + que.criteria[i]);
+          }
+        } else {
+          var keys = [];
+          var w = 0;
+          for (var k in que.criteria) {
+            keys.push(k);
+            if (k.length > w) w = k.length;
+          }
+          for (var j = 0; j < keys.length; j++) {
+            out.push("  " + pad(keys[j], w) + " — " + que.criteria[keys[j]]);
+          }
+        }
+      }
+    }
+    return out.join("\n");
+  };
+
+  var fmtAnswers = function (a) {
+    if (!a) return "(nothing yet)";
+    var out = [];
+    for (var id in a) {
+      if (id == "usage") continue;
+      var an = a[id];
+      if (an.choice != undefined) {
+        out.push(
+          "▸ " +
+            id +
+            " → " +
+            an.choice +
+            "   (p " +
+            pct(an.probabilities && an.probabilities[an.choice]) +
+            ", confidence " +
+            pct(an.confidence) +
+            ")",
+        );
+        if (an.probabilities) {
+          var parts = [];
+          for (var k in an.probabilities)
+            parts.push(k + " " + pct(an.probabilities[k]));
+          out.push("    " + parts.join("   "));
+        }
+      } else if (an.noul != undefined) {
+        out.push("▸ " + id + " → true " + pct(an.noul));
+      } else if (an.score != undefined) {
+        out.push(
+          "▸ " +
+            id +
+            " → score " +
+            Number(an.score).toFixed(2) +
+            "   (confidence " +
+            pct(an.confidence) +
+            ")",
+        );
+        if (an.legend) {
+          var l = [];
+          for (var i in an.legend) l.push(i + "=" + an.legend[i]);
+          out.push("    " + l.join("   "));
+        }
+        if (an.probabilities) {
+          var parts2 = [];
+          for (var k2 in an.probabilities)
+            parts2.push(k2 + " " + pct(an.probabilities[k2]));
+          out.push("    " + parts2.join("   "));
+        }
+      }
+    }
+    if (a.usage) {
+      out.push(
+        "tokens: " +
+          (a.usage.input_tokens != null ? a.usage.input_tokens : "?") +
+          " in / " +
+          (a.usage.output_tokens != null ? a.usage.output_tokens : 0) +
+          " out",
+      );
+    }
+    return out.join("\n");
+  };
+
+  // ---------- right panel: the agent ----------
+
+  var right = mkPanel("AI PLAYER");
+
+  var dot = el("span", { class: "ag-dot" });
+  var stTxt = el("b", { text: "stopped" });
+  var toggleBtn = el("button", {
+    class: "ag-btn primary",
+    text: "start (j)",
+    onclick: function () {
+      pacmanAgent.toggle();
+      refresh();
+    },
+  });
+
+  var hzInput = el("input", {
+    class: "ag-inp",
+    type: "number",
+    min: "1",
+    max: "60",
+    step: "1",
+    value: String(pacmanAgent.settings.hz),
+  });
+  hzInput.addEventListener("change", function () {
+    var v = parseFloat(hzInput.value);
+    if (v > 0 && v <= 60) pacmanAgent.setHz(v);
+    else hzInput.value = String(pacmanAgent.settings.hz);
+    refresh();
+  });
+
+  var provSel = el("select", { class: "ag-sel" });
+  pacmanAgent.providerOrder.forEach(function (name) {
+    provSel.appendChild(
+      el("option", {
+        value: name,
+        text: name + " — " + pacmanAgent.providers[name].label,
+      }),
+    );
+  });
+  provSel.value = pacmanAgent.settings.provider;
+  provSel.addEventListener("change", function () {
+    pacmanAgent.settings.provider = provSel.value;
+    pacmanAgent.save();
+    pacmanAgent.log("provider → " + pacmanAgent.describe());
+  });
+
+  // decision mode: realtime (never stop the game) vs fixed rate (the game
+  // freezes for each decision — no in-game latency, wall latency paid as a
+  // visible freeze). Mirrors pacmanAgent.setMode / the 'm' key.
+  var segRt = el("div", {
+    text: "realtime",
+    onclick: function () {
+      pacmanAgent.setMode("realtime");
+      refresh();
+    },
+  });
+  var segFx = el("div", {
+    text: "fixed rate",
+    onclick: function () {
+      pacmanAgent.setMode("fixed");
+      refresh();
+    },
+  });
+
+  // latency health strip — see refresh() for the state machine. Two lines
+  // (main + sub), both fixed by the CSS; long text ellipsizes, never wraps
+  var latLed = el("span", { class: "led" });
+  var latB = el("b", { text: "latency —" });
+  var latSub = el("span", {
+    class: "sub",
+    text: "start the agent to measure latency…",
+  });
+  var latStrip = el("div", { class: "ag-lat" }, [latLed, latB, latSub]);
+
+  var cell = function (k) {
+    var v = el("span", { class: "v", text: "—" });
+    return {
+      v: v,
+      node: el("div", { class: "ag-cell" }, [
+        el("span", { class: "k", text: k }),
+        v,
+      ]),
+    };
+  };
+  var cLat = cell("latency");
+  var cEwma = cell("latency ewma");
+  var cTok = cell("tokens/req");
+  var cReq = cell("requests");
+  var cDec = cell("decisions");
+  var cErr = cell("errors");
+  var cAns = cell("last answer");
+
+  var lastChoiceB = el("b", { text: "→ (none yet)" });
+  var lastChoiceDim = el("span", { class: "dim" });
+  var lastStrip = el("div", { class: "ag-last" }, [lastChoiceB, lastChoiceDim]);
+
+  // the turn currently held for the next intersection (or "none")
+  var heldB = el("b", { text: "holding —" });
+  var heldDim = el("span", { class: "dim", text: "none" });
+  var heldStrip = el("div", { class: "ag-last ag-hold" }, [heldB, heldDim]);
+
+  // decision history — the tail of this is sent to the model in the state
+  var histPre = el("pre", { class: "ag-pre ag-hist" });
+
+  right.body.appendChild(
+    el("div", { class: "ag-row" }, [
+      dot,
+      stTxt,
+      el("span", { class: "ag-grow" }),
+      toggleBtn,
+    ]),
+  );
+  right.body.appendChild(
+    el("div", { class: "ag-row" }, [
+      el("label", { text: "poll rate" }),
+      hzInput,
+      el("label", { text: "Hz" }),
+    ]),
+  );
+  right.body.appendChild(
+    el("div", { class: "ag-row" }, [
+      el("label", { text: "mode" }),
+      el("div", { class: "ag-seg" }, [segRt, segFx]),
+    ]),
+  );
+  right.body.appendChild(latStrip);
+  right.body.appendChild(
+    el("div", { class: "ag-row" }, [
+      el("label", { text: "provider" }),
+      provSel,
+    ]),
+  );
+  right.body.appendChild(
+    el("div", { class: "ag-grid" }, [
+      cLat.node,
+      cEwma.node,
+      cTok.node,
+      cReq.node,
+      cDec.node,
+      cErr.node,
+      cAns.node,
+    ]),
+  );
+  right.body.appendChild(lastStrip);
+  right.body.appendChild(heldStrip);
+  right.body.appendChild(lab("decision history (tail is sent to the model)"));
+  right.body.appendChild(histPre);
+
+  // ---------- assembly ----------
+
+  var assemble = function () {
+    var canvas = document.getElementById("canvas");
+    if (!canvas || !canvas.parentNode) return;
+    canvas.parentNode.insertBefore(left.root, canvas);
+    canvas.parentNode.insertBefore(right.root, canvas.nextSibling);
+    refresh();
+    refreshSeg();
+    renderAll();
+  };
+  if (document.readyState == "loading") {
+    document.addEventListener("DOMContentLoaded", assemble);
+  } else {
+    assemble();
+  }
+
+  // ---------- live views ----------
+
+  var lastState, lastQuestions, lastImages, lastAnswers;
+  var lastAnswerAt = 0;
+
+  var renderAll = function () {
+    statePre.textContent = lastState || "(nothing yet — start the agent)";
+    questPre.textContent = fmtQuestions(lastQuestions);
+    ansPre.textContent = fmtAnswers(lastAnswers);
+    if (lastImages && lastImages[0]) {
+      shotImg.src = "data:image/png;base64," + lastImages[0];
+    }
+  };
+
+  var refreshSeg = function () {
+    var shot = pacmanAgent.settings.stateMode == "shot";
+    segText.classList[shot ? "remove" : "add"]("sel");
+    segShot.classList[shot ? "add" : "remove"]("sel");
+    shotLab.style.display = shot ? "" : "none";
+    shotBox.style.display = shot ? "" : "none";
+  };
+
+  pacmanAgent.onViewRequest = function (state, questions, images) {
+    lastState = state;
+    lastQuestions = questions;
+    lastImages = images;
+    renderAll();
+  };
+  pacmanAgent.onViewAnswer = function (raw) {
+    lastAnswers = raw;
+    lastAnswerAt = Date.now();
+    var tok = raw && raw.usage && raw.usage.input_tokens;
+    cTok.v.textContent = tok != null ? String(tok) : "—";
+    renderAll();
+  };
+
+  // ---------- status ----------
+
+  var errFlashUntil = 0;
+
+  var refresh = function () {
+    var st = pacmanAgent.status();
+    dot.className =
+      "ag-dot" +
+      (Date.now() < errFlashUntil
+        ? " err"
+        : st.running
+          ? st.holding
+            ? " frozen"
+            : st.busy
+              ? " busy"
+              : " on"
+          : "");
+    stTxt.textContent = !st.running
+      ? "stopped"
+      : st.holding
+        ? "frozen — asking…"
+        : st.busy
+          ? "asking…"
+          : "running";
+    toggleBtn.textContent = st.running ? "stop (j)" : "start (j)";
+    if (document.activeElement != hzInput) {
+      hzInput.value = String(pacmanAgent.settings.hz);
+    }
+    provSel.value = pacmanAgent.settings.provider;
+    var fx = st.mode == "fixed";
+    segRt.classList[fx ? "remove" : "add"]("sel");
+    segFx.classList[fx ? "add" : "remove"]("sel");
+    cLat.v.textContent = st.latencyMs != null ? st.latencyMs + " ms" : "—";
+    cEwma.v.textContent =
+      st.latencyEwmaMs != null ? st.latencyEwmaMs + " ms" : "—";
+
+    // ---- latency health ----
+    // realtime: can the model keep up with the poll rate? ONE request is in
+    // flight at a time, so a fresh answer can land every poll period only
+    // while sustained latency fits inside one poll period — that is the
+    // sustain condition. over: it doesn't (answers arrive slower than the
+    // poll rate). warn: it barely does (most of the period spent waiting).
+    // ok: comfortable headroom.
+    //
+    // fixed rate: every decision lands on time in the game — wall latency
+    // cannot make answers stale, so there is no staleness budget at all.
+    // The strip instead shows the wall-clock cost of the freeze, and warns
+    // when a freeze eats more wall time than the play it buys.
+    var hz = pacmanAgent.settings.hz;
+    var iv = st.intervalMs,
+      lat = st.effLatencyMs,
+      infl = st.inFlightMs;
+    var budget = iv; // realtime: latency budget that sustains hz (1 in flight)
+    var cls = "",
+      mainT = "latency —",
+      subT;
+    // one-line sub texts — the strip is fixed-height, so long sub text
+    // ellipsizes rather than wrapping (keep them short enough to fit)
+    if (st.mode == "fixed") {
+      mainT = "fixed rate —";
+      if (!st.running) {
+        subT = "agent stopped";
+      } else if (st.holding) {
+        cls = st.holdMs > budget ? "warn" : "ok";
+        mainT = "fixed rate: frozen";
+        subT =
+          "answer in flight " +
+          Math.round(st.holdMs) +
+          " ms — game time stands still";
+      } else {
+        cls = st.lastHoldMs > budget ? "warn" : "ok";
+        subT =
+          "froze " +
+          Math.round(st.lastHoldMs) +
+          " ms per " +
+          Math.round(iv) +
+          " ms of play · no in-game latency";
+      }
+    } else if (!st.running && !lat) {
+      subT = "agent stopped";
+    } else if (lat == null) {
+      subT = infl
+        ? "first request in flight…"
+        : "waiting for the first answer…";
+    } else if (lat > budget || infl > budget) {
+      cls = "over";
+      var eff = Math.min(hz, 1000 / lat); // answer arrival rate
+      mainT =
+        "latency " +
+        Math.round(lat) +
+        " ms ≫ budget " +
+        Math.round(budget) +
+        " ms";
+      subT =
+        "answers ~" +
+        eff.toFixed(1) +
+        " Hz · ~" +
+        (lat / iv).toFixed(1) +
+        " polls stale — lower hz" +
+        (infl > budget ? " · in flight " + Math.round(infl) + " ms" : "");
+    } else if (lat > budget * 0.7) {
+      cls = "warn";
+      subT =
+        "answers ~" +
+        (lat / iv).toFixed(1) +
+        " polls stale · inside the period";
+    } else {
+      cls = "ok";
+      subT =
+        "answers inside the poll period (" +
+        Math.round(iv) +
+        " ms @ " +
+        hz +
+        " Hz)";
+    }
+    latStrip.className = "ag-lat" + (cls ? " " + cls : "");
+    latB.textContent = mainT;
+    latSub.textContent = subT;
+    curHealth = cls;
+    var col = cls == "over" ? "#f88" : cls == "warn" ? "#fc6" : "";
+    cLat.v.style.color = col;
+    cEwma.v.style.color = col;
+    cReq.v.textContent = String(st.requests);
+    cDec.v.textContent = String(st.decisions);
+    cErr.v.textContent = String(st.errors);
+    cAns.v.textContent = lastAnswerAt
+      ? ((Date.now() - lastAnswerAt) / 1000).toFixed(1) + " s ago"
+      : "—";
+    var c = st.lastChoice;
+    if (c) {
+      lastChoiceB.textContent =
+        "→ " + c.choice + (c.kind ? " (" + c.kind + ")" : "");
+      lastChoiceDim.textContent =
+        "p=" +
+        (c.probability == null ? "?" : c.probability.toFixed(2)) +
+        " conf=" +
+        (c.confidence == null ? "?" : c.confidence.toFixed(2)) +
+        " · " +
+        c.ms +
+        " ms";
+    }
+
+    // the held turn, and the history tail sent to the model
+    var pd = st.pending;
+    if (pd) {
+      heldB.textContent = "holding " + pd.dir;
+      heldDim.textContent =
+        "since t=" + pd.sinceT.toFixed(1) + "s → next intersection";
+    } else {
+      heldB.textContent = "holding —";
+      heldDim.textContent = "none (no turn held)";
+    }
+    var hh = st.history || [];
+    if (hh.length) {
+      var rows = [];
+      for (var i = 0; i < hh.length; i++) {
+        var e = hh[i];
+        rows.push(
+          "t=" +
+            e.t.toFixed(1) +
+            "s " +
+            pad(e.dir, 6) +
+            e.kind +
+            (e.kind == "turn"
+              ? " — " + pacmanAgent.describeDecisionOutcome(e.outcome)
+              : " — applied instantly"),
+        );
+      }
+      histPre.textContent = rows.join("\n");
+    } else {
+      histPre.textContent = "(no decisions yet)";
+    }
+  };
+
+  // ---------- errors flash the status dot ----------
+
+  // There is no log pane — the console (01-config's logger, which every
+  // emitter already writes to) is the log. Errors additionally flash the
+  // status dot red for a moment (refresh() reads errFlashUntil).
+  var baseLogError = pacmanAgent.logError; // 04 controller console emitter
+  pacmanAgent.logError = function (msg) {
+    errFlashUntil = Date.now() + 2000;
+    baseLogError(msg);
+  };
+
+  // ---------- housekeeping loop ----------
+
+  var lastMode = null;
+  var lastProv = null;
+  var curHealth = ""; // latency health class set by refresh()
+  var lastHealth = "";
+  var lastHealthLogAt = 0;
+  setInterval(function () {
+    if (pacmanAgent.settings.stateMode != lastMode) {
+      lastMode = pacmanAgent.settings.stateMode;
+      refreshSeg();
+    }
+    if (pacmanAgent.settings.provider != lastProv) {
+      lastProv = pacmanAgent.settings.provider;
+      provSel.value = lastProv;
+    }
+    refresh();
+    // announce health transitions in the log (throttled — the effective
+    // rate bounces around the threshold when it is borderline). The alarm
+    // differs per decision mode: realtime fails when answers cannot sustain
+    // the poll rate ("over"); fixed rate always lands answers on time in the
+    // game and instead warns when a freeze costs more wall time than the
+    // play it buys ("warn").
+    var alarm = pacmanAgent.settings.mode == "fixed" ? "warn" : "over";
+    if ((curHealth == alarm) != (lastHealth == alarm)) {
+      var now = Date.now();
+      if (now - lastHealthLogAt > 5000) {
+        if (curHealth == alarm) {
+          if (pacmanAgent.settings.mode == "fixed") {
+            var st2 = pacmanAgent.status();
+            pacmanAgent.log(
+              "fixed rate: last freeze %dms exceeds the %dms of play it buys (@%d Hz) — more wall time frozen than played",
+              Math.round(st2.lastHoldMs),
+              Math.round(st2.intervalMs),
+              pacmanAgent.settings.hz,
+            );
+          } else {
+            var st3 = pacmanAgent.status();
+            var eff = Math.min(
+              pacmanAgent.settings.hz,
+              1000 / (st3.effLatencyMs || 1),
+            );
+            pacmanAgent.log(
+              "latency %dms exceeds the budget %dms (poll %dms @%d Hz, one request in flight) — arrivals ~%s Hz",
+              Math.round(st3.effLatencyMs || 0),
+              Math.round(st3.intervalMs),
+              Math.round(st3.intervalMs),
+              pacmanAgent.settings.hz,
+              eff.toFixed(1),
+            );
+          }
+        } else {
+          pacmanAgent.log(
+            pacmanAgent.settings.mode == "fixed"
+              ? "fixed rate: freeze back under the play period"
+              : "latency back within the budget — arrivals sustain the poll rate",
+          );
+        }
+        lastHealthLogAt = now;
+      }
+      lastHealth = curHealth;
+    }
+  }, 250);
+})();
 })();

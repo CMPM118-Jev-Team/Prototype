@@ -1,0 +1,10 @@
+{
+  "tasks": {
+    "build": "deno run --allow-read=src,agent,index.htm --allow-write=pacman.js,index.htm,index.htm.bak,debug.htm build.ts",
+    "serve": "deno run --allow-read --allow-net serve.ts",
+    "agent-test": "deno run --allow-read --allow-net=127.0.0.1 agent/dev/agent_test.ts",
+    "latency-probe": "deno run --allow-read --allow-net=127.0.0.1 agent/dev/latency_probe.ts",
+    "pipe-test": "deno run --allow-read --allow-net=127.0.0.1 agent/dev/pipe_test.ts",
+    "model-probe": "deno run --allow-read --allow-net=127.0.0.1 agent/dev/model_probe.ts"
+  }
+}

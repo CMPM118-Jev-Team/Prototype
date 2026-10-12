@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+
+<head>
+    <title>pacman agent self test</title>
+    <style>
+        body { background:#000; color:#ccc; font-family:monospace; padding:20px; }
+        button { font-family:monospace; margin:4px; padding:4px 8px; }
+        pre { background:#111; border:1px solid #333; padding:8px; white-space:pre-wrap; }
+        p { max-width:80em; }
+        code { color:#8f8; }
+    </style>
+<script src="01-config.js"></script>
+<script src="02-provider.js"></script>
+</head>
+
+<body>
+
+    <h3>Pac-Man AI Agent — provider self test</h3>
+
+    <p>
+        Sends one canned SystemOne request through the exact client the game uses
+        (<code>agent/01-config.js</code> + <code>agent/02-provider.js</code>).
+        Current settings: <code id="desc"></code>. Override with URL params:
+        <code>?agent=ollama&amp;state=text&amp;endpoint=http://localhost:11434/v1/systemone&amp;token=...&amp;account=...</code>
+        — the same params the game page takes.
+    </p>
+
+    <button onclick="send(false)">send text request</button>
+    <button onclick="send(true)">send vision request</button>
+
+    <pre id="out"></pre>
+
+    <script>
+    (function () {
+        var out = document.getElementById("out");
+        var desc = document.getElementById("desc");
+        desc.textContent = pacmanAgent.describe();
+        out.textContent = "";
+
+        var canned = {
+            state: "Pac-Man is at tile (14,26) heading left. Ghosts: blinky (13,11), pinky (14,14), " +
+                "inky (11,14), clyde (16,14) hunt him. 240 dots remain in the maze.",
+            questions: {
+                direction: {
+                    type: "choice",
+                    instructions: "Which direction should Pac-Man travel next to survive and keep eating dots?",
+                    criteria: {
+                        up: "turn up",
+                        left: "continue left",
+                        down: "turn down",
+                    },
+                },
+            },
+        };
+
+        window.send = function (withImage) {
+            out.textContent += "---- asking " + pacmanAgent.describe() +
+                (withImage ? " (with image)" : "") + "\n";
+            var images = null;
+            if (withImage) {
+                // a tiny stand-in "screenshot": black square, yellow pac-man, one blue ghost
+                var c = document.createElement("canvas");
+                c.width = 8;
+                c.height = 8;
+                var x = c.getContext("2d");
+                x.fillStyle = "#000";
+                x.fillRect(0, 0, 8, 8);
+                x.fillStyle = "#ff0";
+                x.fillRect(3, 3, 2, 2);
+                x.fillStyle = "#00f";
+                x.fillRect(5, 2, 1, 1);
+                images = [c.toDataURL("image/png").replace(/^data:image\/png;base64,/, "")];
+            }
+            pacmanAgent.ask(canned.state, canned.questions, images).then(
+                function (res) {
+                    out.textContent += "ok in " + res.ms + "ms\n\n" +
+                        JSON.stringify(res.raw, null, 2) + "\n\n";
+                },
+                function (err) {
+                    out.textContent += "FAILED: " + (err && err.message || err) + "\n\n";
+                });
+        };
+    })();
+    </script>
+
+</body>
+
+</html>
