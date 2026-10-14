@@ -149,7 +149,7 @@ health, last choice, holding) are fixed-height single-line — long text
 or jumps while the text changes during play. There is **no log pane** — the
 console is the log (see below).
 
-- **left — “AI MODEL INPUT”**: the **state form** menu, and —
+- **left — “AI MODEL INPUT”**: the **state form** menu, the **output** menu, an **additional instructions** box (its text is added to every state), and —
   all at once, no tabs — the exact `state` string sent, the typed `questions`
   (formatted, not raw JSON), the annotated screenshot (screenshot mode) and
   the latest `answers` (choice, probabilities, confidence, token usage), all
@@ -178,6 +178,7 @@ On a narrow window the flex row wraps (panels drop below the canvas).
 | `j` | toggle the AI player on/off                                    |
 | `k` | cycle provider: ollama → vllm → cloudflare → typesafe → custom |
 | `u` | cycle state form: prose → screenshot → the doom cuts → brief   |
+| `b` | cycle output: **direct → intersection → goto → goal**          |
 | `h` | cycle poll rate: 1 → 2 → 5 → 10 → 20 Hz                        |
 | `m` | toggle decision mode: **realtime ↔ fixed rate**                |
 
@@ -198,7 +199,7 @@ console, e.g. `pacmanAgent.settings.verbose = false` or
 http://localhost:8000/?agent=ollama&state=text&hz=10
 ```
 
-`agent` provider id · `state` form id (see below) · `mode` `realtime`\|`fixed` ·
+`agent` provider id · `state` form id (see below) · `output` `direct`\|`intersection`\|`goto`\|`goal` · `mode` `realtime`\|`fixed` ·
 `hz` poll rate · `history` recent decisions sent in the state (1–10) ·
 `shotwidth` screenshot width in px (112–896) ·
 `timeout` request timeout ms · `endpoint` override URL · `model` model id ·
@@ -243,6 +244,19 @@ so a swap is a test of the scene, not of the action. `u` cycles them.
 | `brief`      | Heading, walls, the next intersection, and one line per ghost.                       |
 
 Distance words are guidelines: **contact** is 1 tile or closer, **close** is 2 to 4, **medium** is 5 to 8, **far** is 9 or more. Bearing is relative to the heading: 0 is straight ahead, positive is left, negative is right.
+
+## Output modes
+
+The state form is what the model reads. The output mode is what it answers, and how that answer becomes a direction. The game still only accepts a direction. `b` cycles the output. It is independent of the state form.
+
+| id             | the model chooses                                      | behavior                                                                 |
+| -------------- | ------------------------------------------------------ | ------------------------------------------------------------------------ |
+| `direct`       | up, down, left, or right                               | that direction                                                           |
+| `intersection` | an open exit at the next intersection, and reverse if that u-turn is not already an exit | that direction; a side turn is held until the intersection, a reverse happens at once |
+| `goto`         | a place: pellet, energizer, fruit, or ghost            | walk the maze path toward it, and steer the first step                   |
+| `goal`         | a goal, a dodge, and a movement, including walk-to     | keep the goal, then combine the dodge, the movement, and the maze       |
+
+In `goal`, a dodge into an open tile wins. Otherwise an explicit walk-to is a path. Otherwise close in, back off, and hold ground aim at the goal's subject (the nearest pellet, energizer, or ghost). Fleeing treats close in as moving away. A hunting ghost within 4 tiles overrides closing in on a pellet or an energizer.
 
 ## Reducing latency
 

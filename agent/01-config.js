@@ -69,6 +69,9 @@ var pacmanAgent = (function () {
     stateMode: "text", // which state form to send; see pacmanAgent.stateModes
     // in 03-gamestate.js (text, shot, doom, doom-frame, doom-local,
     // doom-prose, brief)
+    outputMode: "direct", // what the model answers; see pacmanAgent.outputModes
+    // in 03b-output.js (direct, intersection, goto, goal)
+    instructions: "", // extra text added to every state (the left-panel box)
     mode: "realtime", // 'realtime' (never disturb the game) or 'fixed' (the
     // game freezes for each decision — see 04-controller.js)
     hz: 10, // poll rate: how often the model is asked (ONE prompt in
@@ -104,6 +107,7 @@ var pacmanAgent = (function () {
     }
     if (q.agent && providers[q.agent]) settings.provider = q.agent;
     if (q.state && /^[a-z0-9-]+$/.test(q.state)) settings.stateMode = q.state;
+    if (q.output && /^[a-z0-9-]+$/.test(q.output)) settings.outputMode = q.output;
     if (q.mode == "realtime" || q.mode == "fixed") settings.mode = q.mode;
     if (q.hz) {
       var hz = parseInt(q.hz, 10);
@@ -177,6 +181,8 @@ var pacmanAgent = (function () {
         p.label +
         "), state=" +
         settings.stateMode +
+        ", output=" +
+        settings.outputMode +
         ", mode=" +
         settings.mode +
         ", hz=" +

@@ -327,7 +327,7 @@
         "- t=" +
           e.t.toFixed(1) +
           "s: " +
-          e.dir +
+          (e.summary ? e.summary + " → " + e.dir : e.dir) +
           " — " +
           (e.kind == "turn"
             ? "turn for the next intersection, " +
@@ -511,7 +511,10 @@
   };
 
   var measurementBlock = function (local) {
-    var hz = pacmanAgent.settings.hz || 10;
+    var intervalMs = pacmanAgent.decisionIntervalMs;
+    if (!(intervalMs > 0)) intervalMs = 100;
+    var intervalSeconds = round2(intervalMs / 1000);
+    if (intervalSeconds < 0.01) intervalSeconds = 0.01;
     var block = {
       map_unit: {
         name: "tile",
@@ -555,10 +558,10 @@
       accel_note:
         "Pac-Man is at full speed on the next tick, or stopped. There is no acceleration ramp.",
       control_rate: {
-        ticks: Math.round(60 / hz),
-        seconds: round2(1 / hz),
+        ticks: Math.max(1, Math.round(intervalSeconds * 60)),
+        seconds: intervalSeconds,
         controls_persist_across_decisions: true,
-        note: "The chosen direction stays in effect until the next decision.",
+        note: "How often a decision has been landing, as a running average of the gap between decisions. It starts at 0.1 seconds. The chosen direction stays in effect until the next decision.",
       },
       controls: {
         channel: "direction",
@@ -751,7 +754,7 @@
       var e = tail[i];
       out.push({
         t_seconds: round1(e.t),
-        direction: e.dir,
+        direction: e.summary ? e.summary + " → " + e.dir : e.dir,
         result:
           e.kind == "turn"
             ? "turn for the next intersection, " +
@@ -1094,6 +1097,32 @@
 
     var questions = pacmanAgent.buildQuestions(inter);
 
+    // The left-panel box. Prose states gain a closing paragraph. JSON states
+    // gain an additional_instructions field, so the object stays valid.
+    var finish = function (state, images) {
+      var note = pacmanAgent.settings.instructions;
+      if (note && typeof note == "string") note = note.replace(/^\s+|\s+$/g, "");
+      else note = "";
+      if (note) {
+        if (state.charAt(0) == "{") {
+          try {
+            var obj = JSON.parse(state);
+            obj.additional_instructions = note;
+            state = JSON.stringify(obj, null, 2);
+          } catch (e) {
+            state = state + "\n\nAdditional instructions: " + note;
+          }
+        } else {
+          state = state + "\n\nAdditional instructions: " + note;
+        }
+      }
+      return {
+        state: state,
+        questions: questions,
+        images: images || null,
+      };
+    };
+
     if (wantShot) {
       var shot = pacmanAgent.captureScreenshot(inter);
       if (shot) {
@@ -1104,22 +1133,15 @@
         s = s.concat(statsLines(inter));
         s.push("");
         s = s.concat(historyLines());
-        return {
-          state: s.join("\n"),
-          questions: questions,
-          images: [shot.image],
-        };
+        return finish(s.join("\n"), [shot.image]);
       }
       mode = "text";
     }
 
-    return {
-      state:
-        mode == "text"
-          ? pacmanAgent.buildTextState(inter)
-          : pacmanAgent.buildFormState(inter, mode),
-      questions: questions,
-      images: null,
-    };
+    return finish(
+      mode == "text"
+        ? pacmanAgent.buildTextState(inter)
+        : pacmanAgent.buildFormState(inter, mode),
+    );
   };
 })();

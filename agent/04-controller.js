@@ -61,6 +61,24 @@
     return playFrames / 60;
   };
 
+  // How often a decision actually lands, in game time. Starts at 0.1s (the
+  // default poll) and becomes a running average of the gap between decisions:
+  // new = 0.8 * previous + 0.2 * this gap. A long pause is not a sample.
+  var DECISION_INTERVAL_START_MS = 100;
+  var lastDecisionGameS = null;
+  pacmanAgent.decisionIntervalMs = DECISION_INTERVAL_START_MS;
+  var noteDecisionGap = function () {
+    var nowS = pacmanAgent.gameSeconds();
+    if (lastDecisionGameS != null) {
+      var gapMs = (nowS - lastDecisionGameS) * 1000;
+      if (gapMs > 0 && gapMs < 5000) {
+        pacmanAgent.decisionIntervalMs =
+          pacmanAgent.decisionIntervalMs * 0.8 + gapMs * 0.2;
+      }
+    }
+    lastDecisionGameS = nowS;
+  };
+
   // ---- decision history (03 sends the tail of this to the model) ---------
 
   var HISTORY_KEPT = 12; // kept locally; settings.history are SENT
@@ -262,22 +280,21 @@
 
   var applyAnswer = function (res) {
     if (!running) return; // an answer landing after stop() is not applied
-    var ans = res.answers && res.answers.direction;
-    if (!ans || ans.choice == undefined) {
+    var resolved = pacmanAgent.resolveOutput
+      ? pacmanAgent.resolveOutput(res.answers)
+      : null;
+    if (!resolved) {
       throttledLog(
-        "response had no usable direction answer (" +
+        "response had no usable answer (" +
           (errors + 1) +
           " so far): " +
           JSON.stringify(res.raw).slice(0, 120),
       );
       return;
     }
-    var D = pacmanAgent.dirEnumByName[ans.choice];
-    if (D == undefined) {
-      throttledLog("model chose an unknown direction '" + ans.choice + "'");
-      return;
-    }
+    var D = resolved.dirEnum;
     decisions++;
+    noteDecisionGap();
 
     var heading =
       pacman.dirEnum != undefined ? pacman.dirEnum : pacman.nextDirEnum;
@@ -294,7 +311,8 @@
 
     var entry = {
       t: pacmanAgent.gameSeconds(),
-      dir: ans.choice,
+      dir: resolved.dirName,
+      summary: resolved.summary,
       kind: kind,
       outcome: kind == "turn" ? "held" : "instant",
     };
@@ -303,13 +321,12 @@
 
     lastChoice = {
       num: decisions,
-      choice: ans.choice,
+      choice: resolved.summary
+        ? resolved.summary + " → " + resolved.dirName
+        : resolved.dirName,
       kind: kind,
-      probability:
-        ans.probabilities && ans.probabilities[ans.choice] != undefined
-          ? ans.probabilities[ans.choice]
-          : null,
-      confidence: ans.confidence != undefined ? ans.confidence : null,
+      probability: resolved.probability,
+      confidence: resolved.confidence,
       ms: res.ms,
     };
 
@@ -320,7 +337,7 @@
         fromY: pacman.tile.y,
         entry: entry,
       };
-      pacmanAgent.pendingDecision = { dir: ans.choice, sinceT: entry.t };
+      pacmanAgent.pendingDecision = { dir: resolved.dirName, sinceT: entry.t };
     } else {
       pacmanAgent.pendingDecision = null;
     }
@@ -428,6 +445,8 @@
     requests = 0;
     lastChoice = null;
     pending = null;
+    pacmanAgent.decisionIntervalMs = DECISION_INTERVAL_START_MS;
+    lastDecisionGameS = null;
     pacmanAgent.pendingDecision = null;
     inFlight = 0;
     flightStart = 0;

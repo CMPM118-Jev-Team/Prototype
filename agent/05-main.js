@@ -9,6 +9,7 @@
 //   u — cycle the state form (prose, screenshot, the doom cuts, brief)
 //   h — cycle the poll rate (1 → 2 → 5 → 10 → 20 Hz)
 //   m — toggle the decision mode (realtime ↔ fixed rate)
+//   b — cycle the output mode (direct → intersection → goto → goal)
 
 (function () {
   var HZ_STEPS = [1, 2, 5, 10, 20];
@@ -39,7 +40,19 @@
     );
   };
 
+  var cycleOutputMode = function () {
+    var m = pacmanAgent.outputModeIds;
+    var i = m.indexOf(pacmanAgent.settings.outputMode);
+    pacmanAgent.settings.outputMode = m[(i + 1) % m.length];
+    pacmanAgent.save();
+    pacmanAgent.log("output → " + pacmanAgent.settings.outputMode);
+  };
+
   window.addEventListener("keydown", function (e) {
+    var target = e.target || e.srcElement;
+    var tag = target && target.tagName;
+    // Typing in the instructions box (or any field) must not steer the agent.
+    if (tag == "TEXTAREA" || tag == "INPUT" || tag == "SELECT") return;
     var key = (e || window.event).keyCode;
     if (key == 74) {
       // J
@@ -56,13 +69,16 @@
     } else if (key == 77) {
       // M
       toggleMode();
+    } else if (key == 66) {
+      // B
+      cycleOutputMode();
     }
   });
 
   window.addEventListener("load", function () {
     pacmanAgent.log(
       "AI player loaded — press j to start/stop it. " +
-        "keys: j on/off, k provider, u state form, h poll rate, m realtime/fixed. " +
+        "keys: j on/off, k provider, u state form, b output, h poll rate, m realtime/fixed. " +
         pacmanAgent.describe(),
     );
   });

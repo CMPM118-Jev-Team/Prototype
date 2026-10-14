@@ -92,6 +92,11 @@
         ".ag-inp{width:4.5em;background:#0b0d10;color:#cdd;border:1px solid #33404e;border-radius:4px;" +
           "padding:3px 6px;font:inherit;text-align:right;-moz-appearance:textfield}",
         ".ag-inp::-webkit-outer-spin-button,.ag-inp::-webkit-inner-spin-button{display:none}",
+        // extra instructions added to every state. Fixed height so the panel
+        // does not jump while the text changes; the box scrolls inside.
+        ".ag-note{flex:none;height:72px;resize:none;background:#06070a;color:#dfe6f0;" +
+          "border:1px solid #33404e;border-radius:4px;padding:6px;font:inherit;font-size:11px;" +
+          "line-height:1.4;scrollbar-width:thin}",
         // status dot
         ".ag-dot{flex:none;width:9px;height:9px;border-radius:50%;background:#444;margin-right:6px}",
         ".ag-dot.on{background:#39c239;box-shadow:0 0 6px #39c239}",
@@ -192,6 +197,17 @@
     refreshSeg();
   });
 
+  var outputSel = el("select", { class: "ag-sel" });
+  pacmanAgent.outputModes.forEach(function (m) {
+    outputSel.appendChild(el("option", { value: m.id, text: m.label }));
+  });
+  outputSel.addEventListener("change", function () {
+    pacmanAgent.settings.outputMode = outputSel.value;
+    pacmanAgent.save();
+    pacmanAgent.log("output → " + outputSel.value);
+    refreshSeg();
+  });
+
   var statePre = el("pre", { class: "ag-pre ag-state" });
   var questPre = el("pre", { class: "ag-pre ag-q" });
   var shotImg = el("img");
@@ -205,6 +221,27 @@
       stateSel,
     ]),
   );
+  left.body.appendChild(
+    el("div", { class: "ag-row" }, [
+      el("label", { text: "output" }),
+      outputSel,
+    ]),
+  );
+  var noteBox = el("textarea", {
+    class: "ag-note",
+    placeholder:
+      "Added to every state. For example: only dodge, don't go for pellets.",
+  });
+  noteBox.value = pacmanAgent.settings.instructions || "";
+  noteBox.addEventListener("keydown", function (e) {
+    e.stopPropagation();
+  });
+  noteBox.addEventListener("input", function () {
+    pacmanAgent.settings.instructions = noteBox.value;
+    pacmanAgent.save();
+  });
+  left.body.appendChild(lab("additional instructions (added to the state)"));
+  left.body.appendChild(noteBox);
   left.body.appendChild(lab("state sent to the model ('state')"));
   left.body.appendChild(statePre);
   left.body.appendChild(lab("typed questions ('questions')"));
@@ -498,6 +535,9 @@
     var mode = pacmanAgent.settings.stateMode;
     if (pacmanAgent.stateModeIds.indexOf(mode) < 0) mode = "text";
     stateSel.value = mode;
+    var out = pacmanAgent.settings.outputMode;
+    if (pacmanAgent.outputModeIds.indexOf(out) < 0) out = "direct";
+    outputSel.value = out;
     var shot = mode == "shot";
     shotLab.style.display = shot ? "" : "none";
     shotBox.style.display = shot ? "" : "none";
@@ -678,7 +718,8 @@
           "t=" +
             e.t.toFixed(1) +
             "s " +
-            pad(e.dir, 6) +
+            (e.summary ? e.summary + " → " + e.dir : pad(e.dir, 6)) +
+            " " +
             e.kind +
             (e.kind == "turn"
               ? " — " + pacmanAgent.describeDecisionOutcome(e.outcome)

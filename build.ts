@@ -53,6 +53,7 @@ const agentOrder = [
   "01-config.js",
   "02-provider.js",
   "03-gamestate.js",
+  "03b-output.js",
   "04-controller.js",
   "05-main.js",
   "06-ui.js",
