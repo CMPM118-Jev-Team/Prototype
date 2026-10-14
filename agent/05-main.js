@@ -6,14 +6,12 @@
 //
 //   j — toggle the AI player on/off
 //   k — cycle provider (ollama → vllm → cloudflare → typesafe → custom)
-//   u — cycle the state input (text maze ↔ screenshot)
+//   u — cycle the state form (prose, screenshot, the doom cuts, brief)
 //   h — cycle the poll rate (1 → 2 → 5 → 10 → 20 Hz)
 //   m — toggle the decision mode (realtime ↔ fixed rate)
 
 (function () {
   var HZ_STEPS = [1, 2, 5, 10, 20];
-  var STATE_MODES = ["text", "shot"];
-
   var cycleProvider = function () {
     var order = pacmanAgent.providerOrder;
     var i = order.indexOf(pacmanAgent.settings.provider);
@@ -23,13 +21,11 @@
   };
 
   var cycleStateMode = function () {
-    var m = STATE_MODES;
+    var m = pacmanAgent.stateModeIds;
     var i = m.indexOf(pacmanAgent.settings.stateMode);
     pacmanAgent.settings.stateMode = m[(i + 1) % m.length];
     pacmanAgent.save();
-    pacmanAgent.log(
-      "state input → " + (m[i] == "text" ? "text maze" : "screenshot"),
-    );
+    pacmanAgent.log("state input → " + pacmanAgent.settings.stateMode);
   };
 
   var cycleHz = function () {
@@ -66,7 +62,7 @@
   window.addEventListener("load", function () {
     pacmanAgent.log(
       "AI player loaded — press j to start/stop it. " +
-        "keys: j on/off, k provider, u text/screenshot, h poll rate, m realtime/fixed. " +
+        "keys: j on/off, k provider, u state form, h poll rate, m realtime/fixed. " +
         pacmanAgent.describe(),
     );
   });

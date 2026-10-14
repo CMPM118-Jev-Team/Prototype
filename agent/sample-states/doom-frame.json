@@ -1,0 +1,120 @@
+{
+  "form": "doom-frame",
+  "distance_and_bearing": "Contact is 1 tile or closer (touch range), close is 2 to 4 tiles, medium is 5 to 8, far is 9 or more. Bearing 0 is straight ahead, positive is left, negative is right.",
+  "player": {
+    "heading": "left",
+    "lives_left": 3,
+    "level": 1,
+    "score": 70,
+    "dots_left": 237,
+    "energized": null,
+    "status": "stopped, pressed against the wall ahead"
+  },
+  "walls_relative_to_heading": {
+    "left": "open",
+    "ahead": "wall",
+    "right": "open",
+    "behind": "open"
+  },
+  "velocity": {
+    "speed_tiles_per_second": 0,
+    "direction_degrees": 0,
+    "direction_label": "dead ahead"
+  },
+  "enemies": [
+    {
+      "label": "blinky",
+      "kind": "ghost",
+      "status": "hunting, deadly on touch",
+      "distance_tiles": 18,
+      "range": "far",
+      "bearing_degrees": -93,
+      "bearing_label": "right",
+      "heading": "right"
+    },
+    {
+      "label": "pinky",
+      "kind": "ghost",
+      "status": "hunting, deadly on touch",
+      "distance_tiles": 13,
+      "range": "far",
+      "bearing_degrees": -90,
+      "bearing_label": "right",
+      "heading": "up"
+    },
+    {
+      "label": "inky",
+      "kind": "ghost",
+      "status": "in the ghost house, harmless for now",
+      "distance_tiles": 10.3,
+      "range": "far",
+      "bearing_degrees": -119,
+      "bearing_label": "behind right",
+      "heading": "down"
+    },
+    {
+      "label": "clyde",
+      "kind": "ghost",
+      "status": "in the ghost house, harmless for now",
+      "distance_tiles": 12.7,
+      "range": "far",
+      "bearing_degrees": -135,
+      "bearing_label": "behind right",
+      "heading": "down"
+    }
+  ],
+  "items": [
+    {
+      "label": "energizer",
+      "kind": "energizer",
+      "detail": "frightens every hunting ghost",
+      "distance_tiles": 20.6,
+      "range": "far",
+      "bearing_degrees": -76,
+      "bearing_label": "right"
+    },
+    {
+      "label": "energizer",
+      "kind": "energizer",
+      "detail": "frightens every hunting ghost",
+      "distance_tiles": 21.5,
+      "range": "far",
+      "bearing_degrees": -68,
+      "bearing_label": "ahead right"
+    },
+    {
+      "label": "energizer",
+      "kind": "energizer",
+      "detail": "frightens every hunting ghost",
+      "distance_tiles": 5,
+      "range": "medium",
+      "bearing_degrees": 0,
+      "bearing_label": "dead ahead"
+    },
+    {
+      "label": "energizer",
+      "kind": "energizer",
+      "detail": "frightens every hunting ghost",
+      "distance_tiles": 8,
+      "range": "medium",
+      "bearing_degrees": 0,
+      "bearing_label": "dead ahead"
+    },
+    {
+      "label": "nearest pellet",
+      "kind": "pellet",
+      "detail": "237 pellets left",
+      "distance_tiles": 1,
+      "range": "contact",
+      "bearing_degrees": -90,
+      "bearing_label": "right"
+    }
+  ],
+  "next_intersection": {
+    "tiles_ahead": 0,
+    "up": "open",
+    "left": "wall",
+    "down": "open",
+    "right": "open"
+  }
+}

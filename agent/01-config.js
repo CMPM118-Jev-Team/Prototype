@@ -66,7 +66,9 @@ var pacmanAgent = (function () {
 
   var settings = {
     provider: "ollama", // which provider to ask
-    stateMode: "text", // 'text' (prose facts + history) or 'shot' (screenshot image)
+    stateMode: "text", // which state form to send; see pacmanAgent.stateModes
+    // in 03-gamestate.js (text, shot, doom, doom-frame, doom-local,
+    // doom-prose, brief)
     mode: "realtime", // 'realtime' (never disturb the game) or 'fixed' (the
     // game freezes for each decision — see 04-controller.js)
     hz: 10, // poll rate: how often the model is asked (ONE prompt in
@@ -101,7 +103,7 @@ var pacmanAgent = (function () {
       /* ignore malformed urls */
     }
     if (q.agent && providers[q.agent]) settings.provider = q.agent;
-    if (q.state == "text" || q.state == "shot") settings.stateMode = q.state;
+    if (q.state && /^[a-z0-9-]+$/.test(q.state)) settings.stateMode = q.state;
     if (q.mode == "realtime" || q.mode == "fixed") settings.mode = q.mode;
     if (q.hz) {
       var hz = parseInt(q.hz, 10);

@@ -45,14 +45,15 @@ Both modes share the rest of the flow:
     intersection he reaches where that direction is open, and the decision is
     **consumed there** (dropped if that intersection has no such opening)
     — or replaced by whichever newer decision lands first.
-- the state is **prose facts + history** — passages from the current tile, a
-  stopped flag, each ghost in plain words (with a consequence clause when it
-  is on pac-man's lane), passages from the next intersection — and the
-  **recent decision history**: each entry has its timestamp (seconds from the
-  start of the game) and whether the action went through (turns that were held
-  and then walled/replaced say so). **No ASCII maze**: probing showed
-  clef-flash doesn't read it (see "Model comprehension" below), so it isn't
-  paid for — it was ~half the request latency.
+- the state is one of several **forms of the same live frame** (cycle with
+  `u`, the left-panel **state** menu, or `?state=`). The default is **prose
+  facts + history** — passages from the current tile, a stopped flag, each
+  ghost in plain words (with a consequence clause when it is on pac-man's
+  lane), passages from the next intersection — and the **recent decision
+  history**. **No ASCII maze**: probing showed clef-flash doesn't read it
+  (see "Model comprehension" below), so it isn't paid for. The other forms
+  are cuts of a Doom-style scene, for testing which shape the model plays
+  from. See "State forms" below.
 - the question tells the model its **answers land late** (with the measured
   latency) and that it must **plan several intersections ahead**; accounting
   for request latency is the model's job, like a human player's. (In fixed
@@ -148,7 +149,7 @@ health, last choice, holding) are fixed-height single-line — long text
 or jumps while the text changes during play. There is **no log pane** — the
 console is the log (see below).
 
-- **left — “AI MODEL INPUT”**: the **text maze ↔ screenshot** toggle, and —
+- **left — “AI MODEL INPUT”**: the **state form** menu, and —
   all at once, no tabs — the exact `state` string sent, the typed `questions`
   (formatted, not raw JSON), the annotated screenshot (screenshot mode) and
   the latest `answers` (choice, probabilities, confidence, token usage), all
@@ -176,7 +177,7 @@ On a narrow window the flex row wraps (panels drop below the canvas).
 | --- | -------------------------------------------------------------- |
 | `j` | toggle the AI player on/off                                    |
 | `k` | cycle provider: ollama → vllm → cloudflare → typesafe → custom |
-| `u` | cycle state input: **text maze ↔ screenshot**                  |
+| `u` | cycle state form: prose → screenshot → the doom cuts → brief   |
 | `h` | cycle poll rate: 1 → 2 → 5 → 10 → 20 Hz                        |
 | `m` | toggle decision mode: **realtime ↔ fixed rate**                |
 
@@ -197,7 +198,7 @@ console, e.g. `pacmanAgent.settings.verbose = false` or
 http://localhost:8000/?agent=ollama&state=text&hz=10
 ```
 
-`agent` provider id · `state` `text`\|`shot` · `mode` `realtime`\|`fixed` ·
+`agent` provider id · `state` form id (see below) · `mode` `realtime`\|`fixed` ·
 `hz` poll rate · `history` recent decisions sent in the state (1–10) ·
 `shotwidth` screenshot width in px (112–896) ·
 `timeout` request timeout ms · `endpoint` override URL · `model` model id ·
@@ -225,6 +226,23 @@ of the canvas (column/row labels + a red square on the intersection) via the
 Clef `images` extension; on providers without vision it logs a notice and
 falls back to text. Vision tokens scale with pixels — screenshot mode is
 inherently slower than text (see below).
+
+## State forms
+
+Every form is the current frame only. The direction question does not change,
+so a swap is a test of the scene, not of the action. `u` cycles them.
+
+| id           | what the model reads                                                                 |
+| ------------ | ------------------------------------------------------------------------------------ |
+| `text`       | Prose facts and recent decisions. The baseline.                                      |
+| `shot`       | That prose, plus an annotated screenshot.                                            |
+| `doom`       | Doom-demo JSON: tile as the map unit, distance brackets, bearing, tick, speed, how often a decision is made, the player, walls relative to heading, velocity, every ghost, energizers, the nearest pellet, the next intersection, recent decisions. |
+| `doom-frame` | That live frame as JSON, without the physics legend or the decision history.        |
+| `doom-local` | Same JSON, but a ghost or item farther than 8 tiles or behind a wall is `remembered` (out of view) instead of listed in front of you. Its position is where it is now. |
+| `doom-prose` | The frame as sentences: heading-relative walls, range, bearing.                      |
+| `brief`      | Heading, walls, the next intersection, and one line per ghost.                       |
+
+Distance words are guidelines: **contact** is 1 tile or closer, **close** is 2 to 4, **medium** is 5 to 8, **far** is 9 or more. Bearing is relative to the heading: 0 is straight ahead, positive is left, negative is right.
 
 ## Reducing latency
 

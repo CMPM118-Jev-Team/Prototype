@@ -13601,7 +13601,9 @@ var pacmanAgent = (function () {
 
   var settings = {
     provider: "ollama", // which provider to ask
-    stateMode: "text", // 'text' (prose facts + history) or 'shot' (screenshot image)
+    stateMode: "text", // which state form to send; see pacmanAgent.stateModes
+    // in 03-gamestate.js (text, shot, doom, doom-frame, doom-local,
+    // doom-prose, brief)
     mode: "realtime", // 'realtime' (never disturb the game) or 'fixed' (the
     // game freezes for each decision — see 04-controller.js)
     hz: 10, // poll rate: how often the model is asked (ONE prompt in
@@ -13636,7 +13638,7 @@ var pacmanAgent = (function () {
       /* ignore malformed urls */
     }
     if (q.agent && providers[q.agent]) settings.provider = q.agent;
-    if (q.state == "text" || q.state == "shot") settings.stateMode = q.state;
+    if (q.state && /^[a-z0-9-]+$/.test(q.state)) settings.stateMode = q.state;
     if (q.mode == "realtime" || q.mode == "fixed") settings.mode = q.mode;
     if (q.hz) {
       var hz = parseInt(q.hz, 10);
@@ -13853,16 +13855,21 @@ var pacmanAgent = (function () {
 // Pac-Man AI Agent — 03 Game state serialization
 //
 // Turns the live game into one SystemOne request:
-//   - the model input ('state'):
-//       'text' mode: plain-sentence facts — position and passages from the
-//                    current tile, each ghost in words (with a consequence
-//                    clause when it is on pac-man's lane), passages from the
-//                    next intersection — plus the recent decision history.
-//                    NO ASCII maze: probing showed clef-flash does not read
-//                    it (see 'Model comprehension' in README /
-//                    dev/model_probe.ts), so it is not paid for.
-//       'shot' mode: a downscaled annotated screenshot (base64 PNG) sent in
-//                    the Clef 'images' extension, plus the same facts/history.
+//   - the model input ('state'), chosen by settings.stateMode (u / the left
+//     panel / ?state=). Every mode describes the SAME live frame. The cuts
+//     exist so a Jev-like model can be tried against different shapes:
+//       text       prose facts + decision history (the baseline)
+//       shot       annotated screenshot + that same prose
+//       doom       Doom-demo JSON: measurement legend, player, heading-
+//                  relative walls, velocity, every ghost, the nearby items,
+//                  the next intersection, and recent decisions
+//       doom-frame that live frame without the legend or the history
+//       doom-local the same, but anything farther than 8 tiles or behind a
+//                  wall is listed as out of view instead of in front of you
+//       doom-prose the doom-frame facts as sentences
+//       brief      heading, walls, the next intersection, one line per ghost
+//     NO ASCII maze: probing showed clef-flash does not read it (see
+//     'Model comprehension' in README / dev/model_probe.ts).
 //   - the question: a real-time 'direction' choice (see buildQuestions):
 //       current heading → continue straight (applies immediately)
 //       opposite         → u-turn (applies immediately)
@@ -14184,6 +14191,561 @@ var pacmanAgent = (function () {
     return lines;
   };
 
+  // ---- swappable state forms ----------------------------------------------
+  //
+  // Doom-demo shapes of this same frame. Distance words are guidelines, not
+  // measurements taken from one snapshot:
+  //   contact  1 tile or closer   touch range
+  //   close    2 to 4 tiles       a turn or two away
+  //   medium   5 to 8 tiles       a meaningful run
+  //   far      9 tiles or more    distant
+  // Bearing is relative to the current heading: 0 straight ahead, positive
+  // left, negative right. "In view" (doom-local) means within 8 tiles and a
+  // clear straight line of floor; the position given is where it is now.
+
+  var VIEW_TILES = 8;
+
+  pacmanAgent.stateModes = [
+    { id: "text", label: "prose" },
+    { id: "shot", label: "screenshot" },
+    { id: "doom", label: "doom full" },
+    { id: "doom-frame", label: "doom frame" },
+    { id: "doom-local", label: "doom in view" },
+    { id: "doom-prose", label: "doom sentences" },
+    { id: "brief", label: "brief" },
+  ];
+  pacmanAgent.stateModeIds = [];
+  for (var mi = 0; mi < pacmanAgent.stateModes.length; mi++) {
+    pacmanAgent.stateModeIds.push(pacmanAgent.stateModes[mi].id);
+  }
+
+  var round1 = function (n) {
+    return Math.round(n * 10) / 10;
+  };
+  var round2 = function (n) {
+    return Math.round(n * 100) / 100;
+  };
+  var round4 = function (n) {
+    return Math.round(n * 10000) / 10000;
+  };
+
+  var rangeBracket = function (dist) {
+    if (dist <= 1) return "contact";
+    if (dist <= 4) return "close";
+    if (dist <= 8) return "medium";
+    return "far";
+  };
+
+  // 0 ahead, positive left, negative right, ±180 behind.
+  var bearingLabel = function (deg) {
+    var a = Math.abs(deg);
+    if (a <= 20) return "dead ahead";
+    if (a >= 160) return "behind";
+    var side = deg > 0 ? "left" : "right";
+    if (a >= 110) return "behind " + side;
+    if (a >= 70) return side;
+    return "ahead " + side;
+  };
+
+  var openingWord = function (dirEnum, tx, ty) {
+    var d = {};
+    setDirFromEnum(d, dirEnum);
+    var x = tx + d.x;
+    var y = ty + d.y;
+    if (x < 0) x += map.numCols;
+    else if (x >= map.numCols) x -= map.numCols;
+    return map.isFloorTile(x, y) ? "open" : "wall";
+  };
+
+  // Floor all the way to the tile, not counting the tile itself. A wrapped
+  // column is not a straight sightline, so the caller skips this when the
+  // short horizontal distance goes through a tunnel.
+  var clearLine = function (x0, y0, x1, y1) {
+    if (x0 == x1 && y0 == y1) return true;
+    var dx = Math.abs(x1 - x0);
+    var dy = Math.abs(y1 - y0);
+    var sx = x0 < x1 ? 1 : -1;
+    var sy = y0 < y1 ? 1 : -1;
+    var err = dx - dy;
+    var x = x0;
+    var y = y0;
+    var guard = dx + dy + 2;
+    while (guard-- > 0) {
+      var e2 = 2 * err;
+      if (e2 > -dy) {
+        err -= dy;
+        x += sx;
+      }
+      if (e2 < dx) {
+        err += dx;
+        y += sy;
+      }
+      if (x == x1 && y == y1) return true;
+      if (x < 0 || y < 0 || x >= map.numCols || y >= map.numRows) return false;
+      if (!map.isFloorTile(x, y)) return false;
+    }
+    return false;
+  };
+
+  // Where a tile sits relative to Pac-Man. _dist and in_view are for the
+  // splitter; they are not copied into the state.
+  var placeOf = function (tx, ty) {
+    var rawDx = tx - pacman.tile.x;
+    var dx = wrapDx(tx);
+    var dy = ty - pacman.tile.y;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    var fwd = {};
+    var left = {};
+    var heading = headingEnum();
+    setDirFromEnum(fwd, heading);
+    setDirFromEnum(left, rotateLeft(heading));
+    var ahead = dx * fwd.x + dy * fwd.y;
+    var side = dx * left.x + dy * left.y;
+    var deg =
+      ahead == 0 && side == 0
+        ? 0
+        : Math.round((Math.atan2(side, ahead) * 180) / Math.PI);
+    var wrapped = dx != rawDx;
+    return {
+      distance_tiles: round1(dist),
+      range: rangeBracket(dist),
+      bearing_degrees: deg,
+      bearing_label: bearingLabel(deg),
+      in_view:
+        dist <= VIEW_TILES &&
+        !wrapped &&
+        clearLine(pacman.tile.x, pacman.tile.y, tx, ty),
+      _dist: dist,
+    };
+  };
+
+  var ghostCondition = function (g) {
+    if (g.scared) return "frightened and edible";
+    if (g.mode == GHOST_GOING_HOME || g.mode == GHOST_ENTERING_HOME)
+      return "eaten, heading home, harmless";
+    if (g.mode == GHOST_OUTSIDE) return "hunting, deadly on touch";
+    return "in the ghost house, harmless for now";
+  };
+
+  // Sustained tiles/second from the 16-frame step pattern. The table is
+  // read by briefly walking pacman.frames; it is put back before returning.
+  var sustainedSpeed = function () {
+    if (typeof turboMode != "undefined" && turboMode)
+      return round2((2 * 60) / tileSize);
+    var pattern = energizer.isActive() ? STEP_PACMAN_FRIGHT : STEP_PACMAN;
+    var saved = pacman.frames;
+    var sum = 0;
+    var i;
+    for (i = 0; i < 16; i++) {
+      pacman.frames = i;
+      var n = Number(pacman.getStepSizeFromTable(level, pattern));
+      if (n > 0) sum += n;
+    }
+    pacman.frames = saved;
+    return round2((sum / 16) * (60 / tileSize));
+  };
+
+  var currentSpeed = function () {
+    if (pacman.stopped || pacman.eatPauseFramesLeft > 0) return 0;
+    var n = Number(pacman.getNumSteps());
+    if (!(n > 0)) return 0;
+    return round2(n * (60 / tileSize));
+  };
+
+  var livesLeft = function () {
+    if (extraLives == Infinity) return "unlimited";
+    return extraLives + 1;
+  };
+
+  var energizedText = function () {
+    if (!energizer.isActive()) return null;
+    if (energizer.isFlash()) return "yes, flashing, about to end";
+    return "yes, ghosts are edible";
+  };
+
+  var measurementBlock = function (local) {
+    var hz = pacmanAgent.settings.hz || 10;
+    var block = {
+      map_unit: {
+        name: "tile",
+        pixels: tileSize,
+        not: ["inches", "feet", "meters", "miles"],
+        player_size_tiles: 1,
+      },
+      distance_brackets: [
+        {
+          name: "contact",
+          span: "1 tile or closer",
+          meaning: "touch range; a hunting ghost here kills you",
+        },
+        {
+          name: "close",
+          span: "2 to 4 tiles",
+          meaning: "nearby; a turn or two away",
+        },
+        {
+          name: "medium",
+          span: "5 to 8 tiles",
+          meaning: "a meaningful run",
+        },
+        {
+          name: "far",
+          span: "9 tiles or more",
+          meaning: "distant",
+        },
+      ],
+      relative_bearing_degrees: {
+        "0": "straight ahead",
+        positive: "left",
+        negative: "right",
+        "+90": "direct left",
+        "-90": "direct right",
+        "±180": "behind",
+      },
+      tick_seconds: round4(1 / 60),
+      movement_speed_tiles_per_second: sustainedSpeed(),
+      accel_time_from_still_seconds: 0,
+      accel_note:
+        "Pac-Man is at full speed on the next tick, or stopped. There is no acceleration ramp.",
+      control_rate: {
+        ticks: Math.round(60 / hz),
+        seconds: round2(1 / hz),
+        controls_persist_across_decisions: true,
+        note: "The chosen direction stays in effect until the next decision.",
+      },
+      controls: {
+        channel: "direction",
+        simultaneous: false,
+        note: "One direction per decision. Straight and reverse apply at once; a side turn waits for the next intersection.",
+      },
+    };
+    if (local)
+      block.view =
+        "In view means within 8 tiles and not blocked by a wall. Everything else is listed under remembered, at where it is right now.";
+    return block;
+  };
+
+  var playerBlock = function () {
+    return {
+      heading: DIR_NAMES[headingEnum()],
+      lives_left: livesLeft(),
+      level: level,
+      score: getScore(),
+      dots_left: map.dotsLeft(),
+      energized: energizedText(),
+      status: pacman.stopped ? "stopped, pressed against the wall ahead" : null,
+    };
+  };
+
+  var wallsBlock = function () {
+    var h = headingEnum();
+    var tx = pacman.tile.x;
+    var ty = pacman.tile.y;
+    return {
+      left: openingWord(rotateLeft(h), tx, ty),
+      ahead: openingWord(h, tx, ty),
+      right: openingWord(rotateRight(h), tx, ty),
+      behind: openingWord(rotateAboutFace(h), tx, ty),
+    };
+  };
+
+  var velocityBlock = function () {
+    return {
+      speed_tiles_per_second: currentSpeed(),
+      direction_degrees: 0,
+      direction_label: "dead ahead",
+    };
+  };
+
+  var intersectionBlock = function (inter) {
+    var tx = inter.tile.x;
+    var ty = inter.tile.y;
+    return {
+      tiles_ahead: inter.steps,
+      up: openingWord(DIR_UP, tx, ty),
+      left: openingWord(DIR_LEFT, tx, ty),
+      down: openingWord(DIR_DOWN, tx, ty),
+      right: openingWord(DIR_RIGHT, tx, ty),
+    };
+  };
+
+  var withoutPrivate = function (src) {
+    var o = {};
+    for (var k in src) if (k != "in_view" && k != "_dist") o[k] = src[k];
+    return o;
+  };
+
+  var collectEnemies = function () {
+    var list = [];
+    var i;
+    for (i = 0; i < ghosts.length; i++) {
+      var g = ghosts[i];
+      var p = placeOf(g.tile.x, g.tile.y);
+      var hunting = !g.scared && g.mode == GHOST_OUTSIDE;
+      var pathDist = hunting ? ghostPathDistance(g) : 0;
+      var rec = {
+        label: g.name,
+        kind: "ghost",
+        status: ghostCondition(g),
+        distance_tiles: p.distance_tiles,
+        range: p.range,
+        bearing_degrees: p.bearing_degrees,
+        bearing_label: p.bearing_label,
+        heading: DIR_NAMES[g.dirEnum],
+        in_view: p.in_view,
+      };
+      if (pathDist) rec.tiles_ahead_on_your_path = pathDist;
+      list.push(rec);
+    }
+    return list;
+  };
+
+  var pelletAt = function (p, label) {
+    return {
+      label: label,
+      kind: "pellet",
+      detail: map.dotsLeft() + " pellets left",
+      distance_tiles: p.distance_tiles,
+      range: p.range,
+      bearing_degrees: p.bearing_degrees,
+      bearing_label: p.bearing_label,
+      in_view: p.in_view,
+    };
+  };
+
+  var collectItems = function () {
+    var items = [];
+    var best = null;
+    var bestDist = Infinity;
+    var bestSeen = null;
+    var bestSeenDist = Infinity;
+    var y, x, tile, p;
+    for (y = 0; y < map.numRows; y++) {
+      for (x = 0; x < map.numCols; x++) {
+        tile = map.getTile(x, y);
+        if (tile == "o") {
+          p = placeOf(x, y);
+          items.push({
+            label: "energizer",
+            kind: "energizer",
+            detail: "frightens every hunting ghost",
+            distance_tiles: p.distance_tiles,
+            range: p.range,
+            bearing_degrees: p.bearing_degrees,
+            bearing_label: p.bearing_label,
+            in_view: p.in_view,
+          });
+        } else if (tile == ".") {
+          p = placeOf(x, y);
+          if (p._dist < bestDist) {
+            bestDist = p._dist;
+            best = pelletAt(p, "nearest pellet");
+          }
+          if (p.in_view && p._dist < bestSeenDist) {
+            bestSeenDist = p._dist;
+            bestSeen = pelletAt(p, "nearest pellet in sight");
+          }
+        }
+      }
+    }
+    if (best) items.push(best);
+    // The closest pellet can sit behind a wall. Keep the closest one you
+    // can actually see as well, so the in-view list still has a pellet.
+    if (bestSeen && (!best || !best.in_view)) items.push(bestSeen);
+    if (typeof fruit != "undefined" && fruit && fruit.isPresent && fruit.isPresent()) {
+      var fx = Math.floor(fruit.pixel.x / tileSize);
+      var fy = Math.floor(fruit.pixel.y / tileSize);
+      var info = fruit.getCurrentFruit ? fruit.getCurrentFruit() : null;
+      p = placeOf(fx, fy);
+      items.push({
+        label: info && info.name ? info.name : "fruit",
+        kind: "fruit",
+        detail: info && info.points ? info.points + " points" : "bonus",
+        distance_tiles: p.distance_tiles,
+        range: p.range,
+        bearing_degrees: p.bearing_degrees,
+        bearing_label: p.bearing_label,
+        in_view: p.in_view,
+      });
+    }
+    return items;
+  };
+
+  var splitView = function (list) {
+    var here = [];
+    var gone = [];
+    var i;
+    for (i = 0; i < list.length; i++) {
+      var rec = withoutPrivate(list[i]);
+      if (list[i].in_view) here.push(rec);
+      else {
+        rec.last_seen = "now";
+        rec.view = "out of view";
+        gone.push(rec);
+      }
+    }
+    return { here: here, gone: gone };
+  };
+
+  var publishAll = function (list) {
+    var out = [];
+    var i;
+    for (i = 0; i < list.length; i++) out.push(withoutPrivate(list[i]));
+    return out;
+  };
+
+  var decisionEntries = function () {
+    var h = pacmanAgent.history || [];
+    var n = historyCount();
+    var tail = h.length > n ? h.slice(h.length - n) : h;
+    var out = [];
+    var i;
+    for (i = 0; i < tail.length; i++) {
+      var e = tail[i];
+      out.push({
+        t_seconds: round1(e.t),
+        direction: e.dir,
+        result:
+          e.kind == "turn"
+            ? "turn for the next intersection, " +
+              (pacmanAgent.describeDecisionOutcome
+                ? pacmanAgent.describeDecisionOutcome(e.outcome)
+                : String(e.outcome || ""))
+            : e.kind + ", applied instantly",
+      });
+    }
+    return out;
+  };
+
+  var frameObject = function (inter, enemies, items) {
+    return {
+      player: playerBlock(),
+      walls_relative_to_heading: wallsBlock(),
+      velocity: velocityBlock(),
+      enemies: enemies,
+      items: items,
+      next_intersection: intersectionBlock(inter),
+    };
+  };
+
+  var jsonState = function (obj) {
+    return JSON.stringify(obj, null, 2);
+  };
+
+  var sentencePlace = function (rec) {
+    var s =
+      rec.distance_tiles +
+      " tiles (" +
+      rec.range +
+      "), bearing " +
+      (rec.bearing_degrees > 0 ? "+" : "") +
+      rec.bearing_degrees +
+      " degrees (" +
+      rec.bearing_label +
+      ")";
+    if (rec.tiles_ahead_on_your_path)
+      s +=
+        ". Directly on your path, " +
+        rec.tiles_ahead_on_your_path +
+        " tile" +
+        (rec.tiles_ahead_on_your_path == 1 ? "" : "s") +
+        " ahead; continuing straight runs into " +
+        rec.label;
+    return s;
+  };
+
+  var bracketSentence =
+    "Contact is 1 tile or closer (touch range), close is 2 to 4 tiles, medium is 5 to 8, far is 9 or more. Bearing 0 is straight ahead, positive is left, negative is right.";
+
+  var proseFrame = function (inter, enemies, items, brief) {
+    var lines = [];
+    var player = playerBlock();
+    var walls = wallsBlock();
+    var vel = velocityBlock();
+    var cross = intersectionBlock(inter);
+    lines.push(bracketSentence);
+    lines.push(
+      "You are Pac-Man, heading " +
+        player.heading +
+        (player.status ? ". You are " + player.status : "") +
+        ".",
+    );
+    lines.push(
+      "Relative to that heading: left " +
+        walls.left +
+        ", ahead " +
+        walls.ahead +
+        ", right " +
+        walls.right +
+        ", behind " +
+        walls.behind +
+        ".",
+    );
+    lines.push(
+      vel.speed_tiles_per_second == 0
+        ? "You are not moving."
+        : "You are moving at " +
+            vel.speed_tiles_per_second +
+            " tiles per second, dead ahead.",
+    );
+    lines.push(
+      "Your next intersection is " +
+        (cross.tiles_ahead == 0
+          ? "your own tile"
+          : cross.tiles_ahead +
+            " tile" +
+            (cross.tiles_ahead == 1 ? "" : "s") +
+            " ahead") +
+        ". Passages there: up " +
+        cross.up +
+        ", left " +
+        cross.left +
+        ", down " +
+        cross.down +
+        ", right " +
+        cross.right +
+        ".",
+    );
+    var i;
+    for (i = 0; i < enemies.length; i++) {
+      var e = enemies[i];
+      lines.push(
+        e.label +
+          " is " +
+          e.status +
+          ", " +
+          sentencePlace(e) +
+          (brief ? "." : ", heading " + e.heading + "."),
+      );
+    }
+    if (!brief) {
+      for (i = 0; i < items.length; i++) {
+        var it = items[i];
+        lines.push(
+          it.label +
+            " (" +
+            it.detail +
+            ") is " +
+            sentencePlace(it) +
+            ".",
+        );
+      }
+    }
+    lines.push(
+      "Level " +
+        player.level +
+        ", score " +
+        player.score +
+        ", " +
+        player.lives_left +
+        " lives left, " +
+        player.dots_left +
+        " pellets left. " +
+        (player.energized ? "Energized: " + player.energized + "." : "Ghosts are not frightened."),
+    );
+    return lines.join("\n");
+  };
+
   // ---- text mode: prose facts + history (NO maze) ------------------------
   //
   // The maze was removed deliberately: the model_probe experiments showed
@@ -14306,13 +14868,70 @@ var pacmanAgent = (function () {
 
   // ---- the request -------------------------------------------------------
 
+  // The form named by settings.stateMode. Unknown names fall back to prose.
+  pacmanAgent.buildFormState = function (inter, mode) {
+    var enemies = collectEnemies();
+    var items = collectItems();
+    if (mode == "doom") {
+      var full = frameObject(inter, publishAll(enemies), publishAll(items));
+      full.recent_decisions = decisionEntries();
+      return jsonState({
+        form: "doom",
+        measurement: measurementBlock(false),
+        player: full.player,
+        walls_relative_to_heading: full.walls_relative_to_heading,
+        velocity: full.velocity,
+        enemies: full.enemies,
+        items: full.items,
+        next_intersection: full.next_intersection,
+        recent_decisions: full.recent_decisions,
+      });
+    }
+    if (mode == "doom-frame") {
+      var frame = frameObject(inter, publishAll(enemies), publishAll(items));
+      return jsonState({
+        form: "doom-frame",
+        distance_and_bearing: bracketSentence,
+        player: frame.player,
+        walls_relative_to_heading: frame.walls_relative_to_heading,
+        velocity: frame.velocity,
+        enemies: frame.enemies,
+        items: frame.items,
+        next_intersection: frame.next_intersection,
+      });
+    }
+    if (mode == "doom-local") {
+      var ge = splitView(enemies);
+      var gi = splitView(items);
+      var local = frameObject(inter, ge.here, gi.here);
+      return jsonState({
+        form: "doom-local",
+        measurement: measurementBlock(true),
+        player: local.player,
+        walls_relative_to_heading: local.walls_relative_to_heading,
+        velocity: local.velocity,
+        enemies: local.enemies,
+        items: local.items,
+        remembered: ge.gone.concat(gi.gone),
+        next_intersection: local.next_intersection,
+      });
+    }
+    if (mode == "doom-prose")
+      return proseFrame(inter, publishAll(enemies), publishAll(items), false);
+    if (mode == "brief") return proseFrame(inter, publishAll(enemies), [], true);
+    return pacmanAgent.buildTextState(inter);
+  };
+
   pacmanAgent.buildRequest = function () {
     if (!map) return null;
     var inter = pacmanAgent.findNextIntersection();
     if (!inter || inter.options.length == 0) return null;
 
+    var mode = pacmanAgent.settings.stateMode;
+    if (pacmanAgent.stateModeIds.indexOf(mode) < 0) mode = "text";
+
     var provider = pacmanAgent.getProvider();
-    var wantShot = pacmanAgent.settings.stateMode == "shot";
+    var wantShot = mode == "shot";
     if (wantShot && !provider.vision) {
       if (!pacmanAgent._noticedNoVision) {
         pacmanAgent._noticedNoVision = true;
@@ -14323,6 +14942,7 @@ var pacmanAgent = (function () {
         );
       }
       wantShot = false;
+      mode = "text";
     }
 
     var questions = pacmanAgent.buildQuestions(inter);
@@ -14343,11 +14963,14 @@ var pacmanAgent = (function () {
           images: [shot.image],
         };
       }
-      // else fall through to text
+      mode = "text";
     }
 
     return {
-      state: pacmanAgent.buildTextState(inter),
+      state:
+        mode == "text"
+          ? pacmanAgent.buildTextState(inter)
+          : pacmanAgent.buildFormState(inter, mode),
       questions: questions,
       images: null,
     };
@@ -14909,14 +15532,12 @@ var pacmanAgent = (function () {
 //
 //   j — toggle the AI player on/off
 //   k — cycle provider (ollama → vllm → cloudflare → typesafe → custom)
-//   u — cycle the state input (text maze ↔ screenshot)
+//   u — cycle the state form (prose, screenshot, the doom cuts, brief)
 //   h — cycle the poll rate (1 → 2 → 5 → 10 → 20 Hz)
 //   m — toggle the decision mode (realtime ↔ fixed rate)
 
 (function () {
   var HZ_STEPS = [1, 2, 5, 10, 20];
-  var STATE_MODES = ["text", "shot"];
-
   var cycleProvider = function () {
     var order = pacmanAgent.providerOrder;
     var i = order.indexOf(pacmanAgent.settings.provider);
@@ -14926,13 +15547,11 @@ var pacmanAgent = (function () {
   };
 
   var cycleStateMode = function () {
-    var m = STATE_MODES;
+    var m = pacmanAgent.stateModeIds;
     var i = m.indexOf(pacmanAgent.settings.stateMode);
     pacmanAgent.settings.stateMode = m[(i + 1) % m.length];
     pacmanAgent.save();
-    pacmanAgent.log(
-      "state input → " + (m[i] == "text" ? "text maze" : "screenshot"),
-    );
+    pacmanAgent.log("state input → " + pacmanAgent.settings.stateMode);
   };
 
   var cycleHz = function () {
@@ -14969,7 +15588,7 @@ var pacmanAgent = (function () {
   window.addEventListener("load", function () {
     pacmanAgent.log(
       "AI player loaded — press j to start/stop it. " +
-        "keys: j on/off, k provider, u text/screenshot, h poll rate, m realtime/fixed. " +
+        "keys: j on/off, k provider, u state form, h poll rate, m realtime/fixed. " +
         pacmanAgent.describe(),
     );
   });
@@ -14990,7 +15609,7 @@ var pacmanAgent = (function () {
 // panels stretch to the full window height.
 //
 // left  — everything the model is asked, all at once (no tabs): the state
-//          input toggle, the exact 'state' string, the typed 'questions', the
+//          form picker, the exact 'state' string, the typed 'questions', the
 //          annotated screenshot ('images', screenshot mode) and the latest
 //          answers.
 // right — the agent: status, editable poll rate, decision mode, provider,
@@ -15158,26 +15777,16 @@ var pacmanAgent = (function () {
 
   var left = mkPanel("AI MODEL INPUT");
 
-  var segText = el("div", {
-    text: "text maze",
-    onclick: function () {
-      setStateMode("text");
-    },
+  var stateSel = el("select", { class: "ag-sel" });
+  pacmanAgent.stateModes.forEach(function (m) {
+    stateSel.appendChild(el("option", { value: m.id, text: m.label }));
   });
-  var segShot = el("div", {
-    text: "screenshot",
-    onclick: function () {
-      setStateMode("shot");
-    },
-  });
-  var setStateMode = function (mode) {
-    pacmanAgent.settings.stateMode = mode;
+  stateSel.addEventListener("change", function () {
+    pacmanAgent.settings.stateMode = stateSel.value;
     pacmanAgent.save();
-    pacmanAgent.log(
-      "state input → " + (mode == "text" ? "text maze" : "screenshot"),
-    );
+    pacmanAgent.log("state input → " + stateSel.value);
     refreshSeg();
-  };
+  });
 
   var statePre = el("pre", { class: "ag-pre ag-state" });
   var questPre = el("pre", { class: "ag-pre ag-q" });
@@ -15186,8 +15795,12 @@ var pacmanAgent = (function () {
   var shotLab = lab("annotated screenshot sent to the model ('images')");
   var ansPre = el("pre", { class: "ag-pre ag-a" });
 
-  left.body.appendChild(lab("state input"));
-  left.body.appendChild(el("div", { class: "ag-seg" }, [segText, segShot]));
+  left.body.appendChild(
+    el("div", { class: "ag-row" }, [
+      el("label", { text: "state" }),
+      stateSel,
+    ]),
+  );
   left.body.appendChild(lab("state sent to the model ('state')"));
   left.body.appendChild(statePre);
   left.body.appendChild(lab("typed questions ('questions')"));
@@ -15478,9 +16091,10 @@ var pacmanAgent = (function () {
   };
 
   var refreshSeg = function () {
-    var shot = pacmanAgent.settings.stateMode == "shot";
-    segText.classList[shot ? "remove" : "add"]("sel");
-    segShot.classList[shot ? "add" : "remove"]("sel");
+    var mode = pacmanAgent.settings.stateMode;
+    if (pacmanAgent.stateModeIds.indexOf(mode) < 0) mode = "text";
+    stateSel.value = mode;
+    var shot = mode == "shot";
     shotLab.style.display = shot ? "" : "none";
     shotBox.style.display = shot ? "" : "none";
   };

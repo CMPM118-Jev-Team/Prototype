@@ -1,0 +1,178 @@
+{
+  "form": "doom",
+  "measurement": {
+    "map_unit": {
+      "name": "tile",
+      "pixels": 8,
+      "not": [
+        "inches",
+        "feet",
+        "meters",
+        "miles"
+      ],
+      "player_size_tiles": 1
+    },
+    "distance_brackets": [
+      {
+        "name": "contact",
+        "span": "1 tile or closer",
+        "meaning": "touch range; a hunting ghost here kills you"
+      },
+      {
+        "name": "close",
+        "span": "2 to 4 tiles",
+        "meaning": "nearby; a turn or two away"
+      },
+      {
+        "name": "medium",
+        "span": "5 to 8 tiles",
+        "meaning": "a meaningful run"
+      },
+      {
+        "name": "far",
+        "span": "9 tiles or more",
+        "meaning": "distant"
+      }
+    ],
+    "relative_bearing_degrees": {
+      "0": "straight ahead",
+      "positive": "left",
+      "negative": "right",
+      "+90": "direct left",
+      "-90": "direct right",
+      "±180": "behind"
+    },
+    "tick_seconds": 0.0167,
+    "movement_speed_tiles_per_second": 7.5,
+    "accel_time_from_still_seconds": 0,
+    "accel_note": "Pac-Man is at full speed on the next tick, or stopped. There is no acceleration ramp.",
+    "control_rate": {
+      "ticks": 6,
+      "seconds": 0.1,
+      "controls_persist_across_decisions": true,
+      "note": "The chosen direction stays in effect until the next decision."
+    },
+    "controls": {
+      "channel": "direction",
+      "simultaneous": false,
+      "note": "One direction per decision. Straight and reverse apply at once; a side turn waits for the next intersection."
+    }
+  },
+  "player": {
+    "heading": "left",
+    "lives_left": 3,
+    "level": 1,
+    "score": 70,
+    "dots_left": 237,
+    "energized": null,
+    "status": "stopped, pressed against the wall ahead"
+  },
+  "walls_relative_to_heading": {
+    "left": "open",
+    "ahead": "wall",
+    "right": "open",
+    "behind": "open"
+  },
+  "velocity": {
+    "speed_tiles_per_second": 0,
+    "direction_degrees": 0,
+    "direction_label": "dead ahead"
+  },
+  "enemies": [
+    {
+      "label": "blinky",
+      "kind": "ghost",
+      "status": "hunting, deadly on touch",
+      "distance_tiles": 18,
+      "range": "far",
+      "bearing_degrees": -93,
+      "bearing_label": "right",
+      "heading": "right"
+    },
+    {
+      "label": "pinky",
+      "kind": "ghost",
+      "status": "hunting, deadly on touch",
+      "distance_tiles": 13,
+      "range": "far",
+      "bearing_degrees": -90,
+      "bearing_label": "right",
+      "heading": "up"
+    },
+    {
+      "label": "inky",
+      "kind": "ghost",
+      "status": "in the ghost house, harmless for now",
+      "distance_tiles": 10.3,
+      "range": "far",
+      "bearing_degrees": -119,
+      "bearing_label": "behind right",
+      "heading": "down"
+    },
+    {
+      "label": "clyde",
+      "kind": "ghost",
+      "status": "in the ghost house, harmless for now",
+      "distance_tiles": 12.7,
+      "range": "far",
+      "bearing_degrees": -135,
+      "bearing_label": "behind right",
+      "heading": "down"
+    }
+  ],
+  "items": [
+    {
+      "label": "energizer",
+      "kind": "energizer",
+      "detail": "frightens every hunting ghost",
+      "distance_tiles": 20.6,
+      "range": "far",
+      "bearing_degrees": -76,
+      "bearing_label": "right"
+    },
+    {
+      "label": "energizer",
+      "kind": "energizer",
+      "detail": "frightens every hunting ghost",
+      "distance_tiles": 21.5,
+      "range": "far",
+      "bearing_degrees": -68,
+      "bearing_label": "ahead right"
+    },
+    {
+      "label": "energizer",
+      "kind": "energizer",
+      "detail": "frightens every hunting ghost",
+      "distance_tiles": 5,
+      "range": "medium",
+      "bearing_degrees": 0,
+      "bearing_label": "dead ahead"
+    },
+    {
+      "label": "energizer",
+      "kind": "energizer",
+      "detail": "frightens every hunting ghost",
+      "distance_tiles": 8,
+      "range": "medium",
+      "bearing_degrees": 0,
+      "bearing_label": "dead ahead"
+    },
+    {
+      "label": "nearest pellet",
+      "kind": "pellet",
+      "detail": "237 pellets left",
+      "distance_tiles": 1,
+      "range": "contact",
+      "bearing_degrees": -90,
+      "bearing_label": "right"
+    }
+  ],
+  "next_intersection": {
+    "tiles_ahead": 0,
+    "up": "open",
+    "left": "wall",
+    "down": "open",
+    "right": "open"
+  },
+  "recent_decisions": []
+}

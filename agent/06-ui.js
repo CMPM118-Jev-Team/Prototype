@@ -13,7 +13,7 @@
 // panels stretch to the full window height.
 //
 // left  — everything the model is asked, all at once (no tabs): the state
-//          input toggle, the exact 'state' string, the typed 'questions', the
+//          form picker, the exact 'state' string, the typed 'questions', the
 //          annotated screenshot ('images', screenshot mode) and the latest
 //          answers.
 // right — the agent: status, editable poll rate, decision mode, provider,
@@ -181,26 +181,16 @@
 
   var left = mkPanel("AI MODEL INPUT");
 
-  var segText = el("div", {
-    text: "text maze",
-    onclick: function () {
-      setStateMode("text");
-    },
+  var stateSel = el("select", { class: "ag-sel" });
+  pacmanAgent.stateModes.forEach(function (m) {
+    stateSel.appendChild(el("option", { value: m.id, text: m.label }));
   });
-  var segShot = el("div", {
-    text: "screenshot",
-    onclick: function () {
-      setStateMode("shot");
-    },
-  });
-  var setStateMode = function (mode) {
-    pacmanAgent.settings.stateMode = mode;
+  stateSel.addEventListener("change", function () {
+    pacmanAgent.settings.stateMode = stateSel.value;
     pacmanAgent.save();
-    pacmanAgent.log(
-      "state input → " + (mode == "text" ? "text maze" : "screenshot"),
-    );
+    pacmanAgent.log("state input → " + stateSel.value);
     refreshSeg();
-  };
+  });
 
   var statePre = el("pre", { class: "ag-pre ag-state" });
   var questPre = el("pre", { class: "ag-pre ag-q" });
@@ -209,8 +199,12 @@
   var shotLab = lab("annotated screenshot sent to the model ('images')");
   var ansPre = el("pre", { class: "ag-pre ag-a" });
 
-  left.body.appendChild(lab("state input"));
-  left.body.appendChild(el("div", { class: "ag-seg" }, [segText, segShot]));
+  left.body.appendChild(
+    el("div", { class: "ag-row" }, [
+      el("label", { text: "state" }),
+      stateSel,
+    ]),
+  );
   left.body.appendChild(lab("state sent to the model ('state')"));
   left.body.appendChild(statePre);
   left.body.appendChild(lab("typed questions ('questions')"));
@@ -501,9 +495,10 @@
   };
 
   var refreshSeg = function () {
-    var shot = pacmanAgent.settings.stateMode == "shot";
-    segText.classList[shot ? "remove" : "add"]("sel");
-    segShot.classList[shot ? "add" : "remove"]("sel");
+    var mode = pacmanAgent.settings.stateMode;
+    if (pacmanAgent.stateModeIds.indexOf(mode) < 0) mode = "text";
+    stateSel.value = mode;
+    var shot = mode == "shot";
     shotLab.style.display = shot ? "" : "none";
     shotBox.style.display = shot ? "" : "none";
   };

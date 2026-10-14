@@ -1,0 +1,260 @@
+{
+  "source": "Cleaned notes from the Doom demo of Jev. Concrete numbers are the ones written down. Where a measurement was a real number on screen and was not copied, the value is null and the note says so.",
+  "state": {
+    "gun_types": {
+      "each_weapon": {
+        "attack_types": "the ways this weapon attacks",
+        "rate": "how fast it fires",
+        "damage": "damage per hit",
+        "spread": "how widely shots scatter",
+        "effective_range": "the distance at which it is worth using, in the same brackets as everything else",
+        "ammo": "which ammo it consumes",
+        "one_line_description": "what the weapon is for"
+      }
+    },
+    "player_physics": {
+      "movement_speed_units_per_second": null,
+      "accel_time_from_still": null,
+      "note": "Both were real values on screen and were not written down."
+    },
+    "measurement": {
+      "map_unit": {
+        "not": ["inches", "feet", "meters", "miles"],
+        "player_size_units": null,
+        "note": "The player's size in map units was a real number and was not written down."
+      },
+      "distance_brackets": [
+        {
+          "name": "contact",
+          "span": "N map units",
+          "meaning": "melee range"
+        },
+        {
+          "name": "close",
+          "span": "N to M map units",
+          "meaning": "nearby dangerous engagement range"
+        },
+        {
+          "name": "medium",
+          "span": "M to L map units",
+          "meaning": "ranged engagement, and a meaningful travel distance"
+        },
+        {
+          "name": "far",
+          "span": "L map units or more",
+          "meaning": "distant; substantial travel needed"
+        }
+      ],
+      "relative_bearing_degrees": {
+        "0": "straight ahead",
+        "positive": "left",
+        "negative": "right",
+        "+90": "direct left",
+        "-90": "direct right",
+        "±180": "behind"
+      },
+      "vertical_aim": "Automatic while the target is in view. If the target is too high above, back off until it is in sight.",
+      "tick_seconds": null,
+      "tick_note": "The length of one game tick, in seconds, was a real number and was not written down.",
+      "control_rate": {
+        "ticks": null,
+        "seconds": null,
+        "controls_persist_across_decisions": true,
+        "note": "How often a decision is made was a real tick count and a real number of seconds. Neither was written down. Controls persist across decisions."
+      },
+      "controls": {
+        "channels": ["aim", "move", "trigger"],
+        "simultaneous": true
+      },
+      "projectile_prediction": "Closest approach assumes the player stays at the current position. Moving changes it."
+    },
+    "player": {
+      "health": "current / maximum",
+      "armor": "current / maximum",
+      "weapon": "the weapon equipped right now",
+      "ammo": "ammo left for that weapon",
+      "status": null,
+      "carrying": [
+        { "name": "fist" },
+        { "name": "pistol", "ammo": "60 bullets" },
+        { "name": "shotgun", "ammo": "out of shells", "in_hand": true }
+      ],
+      "keys": null,
+      "switching": null
+    },
+    "walls": {
+      "left": "open",
+      "ahead": "open",
+      "right": "open"
+    },
+    "footing": null,
+    "velocity": {
+      "speed_units_per_second": null,
+      "speed_note": "Speed was a real number of map units per second and was not written down.",
+      "direction_degrees": 7,
+      "direction_label": "dead ahead"
+    },
+    "pressed_against_wall": null,
+    "aimed_at": [],
+    "just_took_damage": true,
+    "blind_spots": [],
+    "enemies": {
+      "each_enemy_in_view": {
+        "label": "monster name plus a letter id, such as imp B",
+        "kind": "monster type",
+        "range": "contact, close, medium, or far",
+        "bearing_degrees": "relative bearing",
+        "bearing_label": "ahead, left, right, or behind"
+      }
+    },
+    "items": [
+      {
+        "label": "shotgun C(weapon + 8 shells)",
+        "kind": "shotgun",
+        "detail": "weapon + 8 shells",
+        "range": "medium",
+        "bearing_degrees": 1,
+        "bearing_label": "dead ahead"
+      },
+      {
+        "label": "super shotgun C(weapon + 8 shells)",
+        "kind": "super shotgun",
+        "detail": "weapon + 8 shells",
+        "range": "medium",
+        "bearing_degrees": 9,
+        "bearing_label": "dead ahead"
+      },
+      {
+        "label": "shotgun B(weapon + 8 shells)",
+        "kind": "shotgun",
+        "detail": "weapon + 8 shells",
+        "range": "medium",
+        "bearing_degrees": -18,
+        "bearing_label": "dead ahead"
+      },
+      {
+        "label": "cell pack B(100 cells)",
+        "kind": "cell pack",
+        "detail": "100 cells",
+        "range": "medium",
+        "bearing_degrees": -6,
+        "bearing_label": "dead ahead"
+      },
+      {
+        "label": "stimpack A(10 health)",
+        "kind": "stimpack",
+        "detail": "10 health",
+        "range": "far",
+        "bearing_degrees": -6,
+        "bearing_label": "dead ahead"
+      }
+    ],
+    "remembered": [
+      {
+        "label": "ammo clip C(10 bullets)",
+        "last_seen": "just now",
+        "distance": 121,
+        "distance_bracket": "close",
+        "bearing_degrees": -53,
+        "bearing_label": "ahead right",
+        "status": "out of view"
+      },
+      {
+        "label": "imp G",
+        "last_seen": "just now",
+        "distance": 293,
+        "distance_bracket": "medium",
+        "bearing_degrees": 53,
+        "bearing_label": "ahead right",
+        "bearing_note": "Written as +53 and 'ahead right'. The bearing key says positive is left, so this label disagrees with the sign.",
+        "status": "out of view"
+      },
+      {
+        "label": "cacodemon H",
+        "last_seen": "just now",
+        "distance": 57,
+        "distance_bracket": "contact",
+        "bearing_degrees": -92,
+        "bearing_label": "right",
+        "status": "out of view"
+      }
+    ]
+  },
+  "decisions": {
+    "answer": {
+      "choice": "one of that question's options",
+      "confidence": "how sure that choice is"
+    },
+    "questions": [
+      {
+        "id": "trigger",
+        "prompt": "Should the trigger be held right now?",
+        "options": ["fire", "hold fire"]
+      },
+      {
+        "id": "goal",
+        "prompt": "Considering the player, enemies, and items, what is the highest priority goal right now?",
+        "options": [
+          "upgrade weapon",
+          "scout",
+          "kill enemies",
+          "stock ammo",
+          "restore health",
+          "add armor"
+        ]
+      },
+      {
+        "id": "dodge",
+        "prompt": "The player's current top priority is killing enemies, focusing on imp B. What does this exact moment call for?",
+        "active_goal": "kill enemies",
+        "focus": "imp B",
+        "options": ["carry on", "dodge left", "dodge right", "dodge back"]
+      },
+      {
+        "id": "movement",
+        "prompt": "The player's current top priority is killing enemies, focusing on imp B. What does this exact moment call for?",
+        "active_goal": "kill enemies",
+        "focus": "imp B",
+        "options": [
+          "hold ground",
+          "close in",
+          "hold range",
+          "back off",
+          "walk to <a place in view or remembered>",
+          "walk to <a place in view or remembered>",
+          "walk to <a place in view or remembered>",
+          "walk to <a place in view or remembered>",
+          "walk to <a place in view or remembered>",
+          "walk to <a place in view or remembered>"
+        ]
+      }
+    ]
+  },
+  "behavior": {
+    "rule": "World knowledge plus the overarching goal and the moment's decisions become a behavior.",
+    "from_knowledge": [
+      {
+        "known": "enemies",
+        "becomes": "The kill-enemies goal takes one enemy as its subject. Dodge and movement are then asked about that enemy, as with imp B."
+      },
+      {
+        "known": "armors",
+        "becomes": "The add-armor goal takes one armor as its subject. Movement walks to it. The answer is that destination, and the behavior is move to position."
+      },
+      {
+        "known": "weapons",
+        "becomes": "The upgrade-weapon goal takes one weapon as its subject. Movement walks to it. The answer is that destination, and the behavior is move to position."
+      },
+      {
+        "known": "items",
+        "becomes": "The goal that item serves takes it as the subject. Movement walks to it. The answer is that destination, and the behavior is move to position."
+      }
+    ],
+    "example": [
+      { "stage": "goal", "value": "restore health", "subject": "stimpack A" },
+      { "stage": "movement", "value": "walk to stimpack A" },
+      { "stage": "answer", "value": "destination" },
+      { "stage": "behavior", "value": "move to position" }
+    ]
+  }
+}

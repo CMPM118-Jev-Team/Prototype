@@ -1,0 +1,15 @@
+PAC-MAN, seen from above in the attached screenshot. The red square marks your next intersection (X).
+Facts about the game follow as plain sentences.
+You are '@' at x=6, y=26, heading left. You are STOPPED: you are pressed against the wall ahead and will not move until you turn.
+Passages from your tile: up open, left blocked (wall), down open, right open.
+Level 1, score 70, 237 dots left. Ghosts kill you on touch unless frightened.
+Ghost mode: scatter — the hunting ghosts head to their corners.
+blinky is hunting you (deadly on touch) and is 18 tiles above you and 1 tile to your right, heading right.
+pinky is hunting you (deadly on touch) and is 13 tiles above you, heading up.
+inky is inside the ghost house (harmless for now) and is 9 tiles above you and 5 tiles to your right, heading down.
+clyde is inside the ghost house (harmless for now) and is 9 tiles above you and 9 tiles to your right, heading down.
+Your next intersection X is at x=6, y=26 — your own tile. Passages from X: up open, left blocked (wall), down open, right open.
+
+Your recent decisions (t = seconds from the start of the game; newest last;
+'went through' = the action actually happened):
+- none yet
