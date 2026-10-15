@@ -188,14 +188,16 @@
     return 0;
   };
 
-  var statsLines = function (inter) {
+  // withCoords: say where pac-man is in x/y. Only the screenshot state wants
+  // that (its grid labels use the same coordinates); in prose every other
+  // fact is relative, so an absolute position has nothing to be read against.
+  // Level and score are left out: no decision depends on them.
+  var statsLines = function (inter, withCoords) {
     var lines = [];
     lines.push(
-      "You are '@' at x=" +
-        pacman.tile.x +
-        ", y=" +
-        pacman.tile.y +
-        ", heading " +
+      (withCoords
+        ? "You are at x=" + pacman.tile.x + ", y=" + pacman.tile.y + ", heading "
+        : "You are heading ") +
         DIR_NAMES[headingEnum()] +
         "." +
         (pacman.stopped
@@ -208,13 +210,7 @@
         ".",
     );
     lines.push(
-      "Level " +
-        level +
-        ", score " +
-        getScore() +
-        ", " +
-        map.dotsLeft() +
-        " dots left. Ghosts kill you on touch unless frightened.",
+      map.dotsLeft() + " dots left. Ghosts kill you on touch unless frightened.",
     );
     lines.push(
       "Ghost mode: " +
@@ -376,9 +372,6 @@
   var round2 = function (n) {
     return Math.round(n * 100) / 100;
   };
-  var round4 = function (n) {
-    return Math.round(n * 10000) / 10000;
-  };
 
   var rangeBracket = function (dist) {
     if (dist <= 1) return "contact";
@@ -470,6 +463,13 @@
     };
   };
 
+  // What things are worth, as the game scores them (Player.js: a dot 10, an
+  // energizer 50; energizer.js: each frightened ghost eaten is worth double the
+  // last, 200 up to 1600). Said once, in each state's legend and in the goto
+  // instructions, rather than on every item.
+  var valuesSentence =
+    "Points: pellet 10, energizer 50 (frightens every hunting ghost so they can be eaten), frightened ghosts you eat 200, then 400, 800, 1600.";
+
   var ghostCondition = function (g) {
     if (g.scared) return "frightened and edible";
     if (g.mode == GHOST_GOING_HOME || g.mode == GHOST_ENTERING_HOME)
@@ -480,22 +480,6 @@
 
   // Sustained tiles/second from the 16-frame step pattern. The table is
   // read by briefly walking pacman.frames; it is put back before returning.
-  var sustainedSpeed = function () {
-    if (typeof turboMode != "undefined" && turboMode)
-      return round2((2 * 60) / tileSize);
-    var pattern = energizer.isActive() ? STEP_PACMAN_FRIGHT : STEP_PACMAN;
-    var saved = pacman.frames;
-    var sum = 0;
-    var i;
-    for (i = 0; i < 16; i++) {
-      pacman.frames = i;
-      var n = Number(pacman.getStepSizeFromTable(level, pattern));
-      if (n > 0) sum += n;
-    }
-    pacman.frames = saved;
-    return round2((sum / 16) * (60 / tileSize));
-  };
-
   var currentSpeed = function () {
     if (pacman.stopped || pacman.eatPauseFramesLeft > 0) return 0;
     var n = Number(pacman.getNumSteps());
@@ -514,18 +498,11 @@
     return "yes, ghosts are edible";
   };
 
+  // The legend: what the distances, bearings and points mean. Kept to what a
+  // decision uses (the units are tiles, said in the brackets); the game's
+  // timing, speed and control-rate figures are left out.
   var measurementBlock = function (local) {
-    var intervalMs = pacmanAgent.decisionIntervalMs;
-    if (!(intervalMs > 0)) intervalMs = 100;
-    var intervalSeconds = round2(intervalMs / 1000);
-    if (intervalSeconds < 0.01) intervalSeconds = 0.01;
     var block = {
-      map_unit: {
-        name: "tile",
-        pixels: tileSize,
-        not: ["inches", "feet", "meters", "miles"],
-        player_size_tiles: 1,
-      },
       distance_brackets: [
         {
           name: "contact",
@@ -556,22 +533,7 @@
         "-90": "direct right",
         "±180": "behind",
       },
-      tick_seconds: round4(1 / 60),
-      movement_speed_tiles_per_second: sustainedSpeed(),
-      accel_time_from_still_seconds: 0,
-      accel_note:
-        "Pac-Man is at full speed on the next tick, or stopped. There is no acceleration ramp.",
-      control_rate: {
-        ticks: Math.max(1, Math.round(intervalSeconds * 60)),
-        seconds: intervalSeconds,
-        controls_persist_across_decisions: true,
-        note: "How often a decision has been landing, as a running average of the gap between decisions. It starts at 0.1 seconds. The chosen direction stays in effect until the next decision.",
-      },
-      controls: {
-        channel: "direction",
-        simultaneous: false,
-        note: "One direction per decision. Straight and reverse apply at once; a side turn waits for the next intersection.",
-      },
+      points: valuesSentence,
     };
     if (local)
       block.view =
@@ -629,11 +591,41 @@
     return o;
   };
 
+  // A ghost that is eaten (heading home) or still in the house is harmless:
+  // it gets no record of its own. The ones waiting in the house are named in
+  // one short line (waitingLine), since they come out as hunters later.
+  var isOut = function (g) {
+    return g.scared || g.mode == GHOST_OUTSIDE;
+  };
+
+  var waitingNames = function () {
+    var names = [];
+    for (var i = 0; i < ghosts.length; i++) {
+      var g = ghosts[i];
+      if (isOut(g)) continue;
+      if (g.mode == GHOST_GOING_HOME || g.mode == GHOST_ENTERING_HOME) continue;
+      names.push(g.name);
+    }
+    return names;
+  };
+
+  // "pinky, inky and clyde are waiting in the ghost house." or "" if none
+  var waitingLine = function () {
+    var n = waitingNames();
+    if (!n.length) return "";
+    var who =
+      n.length == 1
+        ? n[0]
+        : n.slice(0, n.length - 1).join(", ") + " and " + n[n.length - 1];
+    return who + (n.length == 1 ? " is" : " are") + " waiting in the ghost house.";
+  };
+
   var collectEnemies = function () {
     var list = [];
     var i;
     for (i = 0; i < ghosts.length; i++) {
       var g = ghosts[i];
+      if (!isOut(g)) continue;
       var p = placeOf(g.tile.x, g.tile.y);
       var hunting = !g.scared && g.mode == GHOST_OUTSIDE;
       var pathDist = hunting ? ghostPathDistance(g) : 0;
@@ -810,8 +802,76 @@
     return s;
   };
 
-  var bracketSentence =
-    "Contact is 1 tile or closer (touch range), close is 2 to 8 tiles, medium is 9 to 16, far is 17 or more. Bearing 0 is straight ahead, positive is left, negative is right.";
+  // ---- scale and speed, in words ---------------------------------------------
+  //
+  // A distance means more with something to measure it against. These say how
+  // big the maze is and how fast everything runs, read from the game each time
+  // so they follow the level.
+
+  // Tiles a second an actor covers on an empty path, from the game's own
+  // 16-frame speed table. The table is read by briefly walking actor.frames;
+  // it is put back before returning.
+  var tilesPerSecond = function (actor, pattern) {
+    var saved = actor.frames;
+    var sum = 0;
+    for (var i = 0; i < 16; i++) {
+      actor.frames = i;
+      var n = Number(actor.getStepSizeFromTable(level ? level : 1, pattern));
+      if (n > 0) sum += n;
+    }
+    actor.frames = saved;
+    return (sum / 16) * (60 / tileSize);
+  };
+
+  // One figure for "you and the ghosts": Pac-Man's and a ghost's speed
+  // averaged and rounded (they differ by a little, and by level).
+  var runSpeed = function () {
+    var avg = Math.round(
+      (tilesPerSecond(pacman, STEP_PACMAN) + tilesPerSecond(ghosts[0], STEP_GHOST)) / 2,
+    );
+    return avg > 0 ? avg : 7;
+  };
+
+  var fractionWords = function (f) {
+    if (f >= 0.2 && f <= 0.3) return "a quarter";
+    if (f > 0.3 && f <= 0.4) return "a third";
+    return "about " + Math.round(f * 100) + "%";
+  };
+
+  var scaleSentence = function () {
+    var speed = runSpeed();
+    return (
+      "Scale: the maze is " +
+      map.numCols +
+      " tiles wide, and you and the ghosts all run about " +
+      speed +
+      " tiles a second, so a second's run is " +
+      fractionWords(speed / map.numCols) +
+      " of the board."
+    );
+  };
+
+  var speedNote =
+    "Ghosts are about as fast as you: they gain on you while you eat dots and fall behind on empty paths. Frightened ghosts are slow.";
+
+  // What each distance word means, in terms of that run.
+  var bracketSentence = function () {
+    return "Distance in tiles: contact 1 or less (touching; a hunting ghost here kills you), close 2 to 8 (within a second's run), medium 9 to 16 (one to two seconds away), far 17 or more (over two seconds, across the board). Bearing from your heading: 0 straight ahead, positive left, negative right.";
+  };
+
+  // The scale and the brackets together: the legend of the sentence states.
+  var legendSentence = function () {
+    return scaleSentence() + " " + bracketSentence();
+  };
+
+  // Shared with 03b-output.js so the goto and goal menus describe a place the
+  // same way these states do: distance, range, bearing from the heading.
+  pacmanAgent.placeOf = placeOf;
+  pacmanAgent.sentencePlace = sentencePlace;
+  pacmanAgent.bracketSentence = bracketSentence;
+  pacmanAgent.legendSentence = legendSentence;
+  pacmanAgent.valuesSentence = valuesSentence;
+  pacmanAgent.stateModesWithLegend = ["doom", "doom-frame", "doom-local", "doom-prose", "brief"];
 
   var proseFrame = function (inter, enemies, items, brief) {
     var lines = [];
@@ -819,7 +879,7 @@
     var walls = wallsBlock();
     var vel = velocityBlock();
     var cross = intersectionBlock(inter);
-    lines.push(bracketSentence);
+    lines.push(legendSentence() + " " + valuesSentence);
     lines.push(
       "You are Pac-Man, heading " +
         player.heading +
@@ -837,13 +897,8 @@
         walls.behind +
         ".",
     );
-    lines.push(
-      vel.speed_tiles_per_second == 0
-        ? "You are not moving."
-        : "You are moving at " +
-            vel.speed_tiles_per_second +
-            " tiles per second, dead ahead.",
-    );
+    // moving is the normal case and says nothing; only standing still is news
+    if (vel.speed_tiles_per_second == 0) lines.push("You are not moving.");
     lines.push(
       "Your next intersection is " +
         (cross.tiles_ahead == 0
@@ -874,6 +929,8 @@
           (brief ? "." : ", heading " + e.heading + "."),
       );
     }
+    var waiting = waitingLine();
+    if (waiting) lines.push(waiting);
     if (!brief) {
       for (i = 0; i < items.length; i++) {
         var it = items[i];
@@ -914,6 +971,10 @@
     lines.push("PAC-MAN. Facts about the game follow as plain sentences.");
     var stats = statsLines(inter);
     for (var s = 0; s < stats.length; s++) lines.push(stats[s]);
+    // this state has no legend, so its distances ("12 tiles above you") get
+    // the scale and the relative speed here
+    lines.push(scaleSentence());
+    lines.push(speedNote);
 
     lines.push("");
     var hist = historyLines();
@@ -998,12 +1059,8 @@
         criteria[name] =
           "u-turn: reverse and travel " + name + " — applied immediately";
       else
-        criteria[name] =
-          "turn " +
-          name +
-          " — held and applied at the next intersection you reach (consumed there even if it has no " +
-          name +
-          " opening; replaced by any newer decision)";
+        // the held-turn rules are in the instructions below, once
+        criteria[name] = "turn " + name + " (waits for the next intersection)";
     }
     var latencySentence = lat
       ? "Your answers have been arriving about " +
@@ -1030,6 +1087,9 @@
   pacmanAgent.buildFormState = function (inter, mode) {
     var enemies = collectEnemies();
     var items = collectItems();
+    // ghosts waiting in the house: named once; left out of the JSON when none
+    var idle = waitingNames();
+    var waitingInHouse = idle.length ? idle : undefined;
     if (mode == "doom") {
       var full = frameObject(inter, publishAll(enemies), publishAll(items));
       full.recent_decisions = decisionEntries();
@@ -1040,6 +1100,7 @@
         walls_relative_to_heading: full.walls_relative_to_heading,
         velocity: full.velocity,
         enemies: full.enemies,
+        waiting_in_ghost_house: waitingInHouse,
         items: full.items,
         next_intersection: full.next_intersection,
         recent_decisions: full.recent_decisions,
@@ -1049,11 +1110,13 @@
       var frame = frameObject(inter, publishAll(enemies), publishAll(items));
       return jsonState({
         form: "doom-frame",
-        distance_and_bearing: bracketSentence,
+        distance_and_bearing: legendSentence(),
+        points: valuesSentence,
         player: frame.player,
         walls_relative_to_heading: frame.walls_relative_to_heading,
         velocity: frame.velocity,
         enemies: frame.enemies,
+        waiting_in_ghost_house: waitingInHouse,
         items: frame.items,
         next_intersection: frame.next_intersection,
       });
@@ -1069,6 +1132,7 @@
         walls_relative_to_heading: local.walls_relative_to_heading,
         velocity: local.velocity,
         enemies: local.enemies,
+        waiting_in_ghost_house: waitingInHouse,
         items: local.items,
         remembered: ge.gone.concat(gi.gone),
         next_intersection: local.next_intersection,
@@ -1138,7 +1202,7 @@
           "PAC-MAN, seen from above in the attached screenshot. The red square marks your next intersection (X).",
           "Facts about the game follow as plain sentences.",
         ];
-        s = s.concat(statsLines(inter));
+        s = s.concat(statsLines(inter, true));
         s.push("");
         s = s.concat(historyLines());
         return finish(s.join("\n"), [shot.image]);

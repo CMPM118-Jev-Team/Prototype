@@ -13,9 +13,11 @@
 //                 plus reverse if that u-turn is not already an exit. Still
 //                 just a direction. A side turn is held for the intersection;
 //                 reverse is applied at once.
-//   goto          One choice: a place (pellet, energizer, fruit, ghost). Until
-//                 the next answer, the behavior follows the shortest maze path
-//                 to that place and presses each next step, including turns.
+//   goto          One choice: a place (pellet, energizer, fruit, an edible
+//                 ghost) or "run away". Until the next answer, the behavior
+//                 follows the shortest maze path to that place and presses each
+//                 next step, including turns; "run away" instead heads for the
+//                 tiles Pac-Man can reach before any hunting ghost (stepFlee).
 //   goal          Three choices, as in the Doom demo: the goal to maintain,
 //                 a dodge, and a movement. Until the next answer the behavior
 //                 re-reads the maze and combines them. A dodge is locked to
@@ -190,6 +192,128 @@
     return best == null ? h : best;
   };
 
+  // ---- fleeing ---------------------------------------------------------------
+  //
+  // A tile is SAFE for Pac-Man if he can be on it before any hunting ghost can
+  // (his path there is shorter than every hunter's). All distances are along
+  // the maze, not straight lines. Fleeing goes to the open neighbour from
+  // which the most safe tiles can still be reached: the way with the most room
+  // to run, which keeps him out of dead ends. If nowhere is safe, it takes the
+  // neighbour farthest from the nearest hunter. Only ghosts that are hunting
+  // count; edible, eaten and waiting ghosts are not a danger.
+  var huntingGhosts = function () {
+    var out = [];
+    var i;
+    for (i = 0; i < ghosts.length; i++) {
+      if (!ghosts[i].scared && ghosts[i].mode == GHOST_OUTSIDE)
+        out.push(ghosts[i]);
+    }
+    return out;
+  };
+
+  var stepFlee = function () {
+    var hunters = huntingGhosts();
+    var h = headingEnum();
+    if (!hunters.length) return h;
+    var sx = pacman.tile.x;
+    var sy = pacman.tile.y;
+
+    // each tile's distance from the nearest hunter
+    var ghostDist = {};
+    var i, k;
+    for (i = 0; i < hunters.length; i++) {
+      var d = distFrom(hunters[i].tile.x, hunters[i].tile.y);
+      for (k in d) {
+        if (ghostDist[k] == undefined || d[k] < ghostDist[k]) ghostDist[k] = d[k];
+      }
+    }
+    var gd = function (key) {
+      var v = ghostDist[key];
+      return v == undefined ? Infinity : v;
+    };
+
+    var bestDir = null;
+    var bestRoom = -1;
+    var bestLead = -Infinity;
+    var e;
+    for (e = 0; e < 4; e++) {
+      var n = stepTo(sx, sy, e);
+      if (!n) continue;
+      var nk = keyOf(n.x, n.y);
+      var lead = gd(nk) - 1; // steps by which Pac-Man beats the ghosts there
+      // safe tiles reachable by committing to this first step (never going
+      // back through the tile he stands on), each reached before any ghost
+      var room = 0;
+      if (lead > 0) {
+        var seen = {};
+        seen[keyOf(sx, sy)] = true;
+        seen[nk] = true;
+        var q = [{ x: n.x, y: n.y, t: 1 }];
+        room = 1;
+        var head = 0;
+        while (head < q.length) {
+          var cur = q[head++];
+          var e2;
+          for (e2 = 0; e2 < 4; e2++) {
+            var s = stepTo(cur.x, cur.y, e2);
+            if (!s) continue;
+            var sk = keyOf(s.x, s.y);
+            if (seen[sk]) continue;
+            seen[sk] = true;
+            if (cur.t + 1 < gd(sk)) {
+              room++;
+              q.push({ x: s.x, y: s.y, t: cur.t + 1 });
+            }
+          }
+        }
+      }
+      if (
+        room > bestRoom ||
+        (room == bestRoom && lead > bestLead) ||
+        (room == bestRoom && lead == bestLead && e == h)
+      ) {
+        bestRoom = room;
+        bestLead = lead;
+        bestDir = e;
+      }
+    }
+    return bestDir == null ? h : bestDir;
+  };
+
+  // How near a hunter has to be, by the maze, for fleeing to make sense. Offer
+  // the option only inside fleeOffer steps; once chosen, flee until every
+  // hunter is fleeRelease steps or more away, then go back to eating. The gap
+  // between the two keeps it from flipping at the edge. (Pac-Man covers about
+  // 7.5 tiles a second, so 8 steps is about a second.) Defaults 8 and 12: in a
+  // simulated run, offering at 12 had Pac-Man fleeing 46% of the time against
+  // 34% at 8, with no better survival.
+  // Tune with ?flee= and ?fleeend= (01-config.js).
+  var fleeOffer = function () {
+    var n = pacmanAgent.settings.fleeOffer;
+    return n > 0 ? n : 8;
+  };
+  var fleeRelease = function () {
+    var n = pacmanAgent.settings.fleeRelease;
+    if (!(n > 0)) n = 12;
+    return Math.max(n, fleeOffer() + 1);
+  };
+
+  // The nearest hunting ghost by the maze: { ghost, steps }, or null when none
+  // is hunting or none can reach Pac-Man.
+  var nearestHunter = function () {
+    var hunters = huntingGhosts();
+    if (!hunters.length) return null;
+    var dist = distFrom(pacman.tile.x, pacman.tile.y);
+    var best = null;
+    var i;
+    for (i = 0; i < hunters.length; i++) {
+      var d = dist[keyOf(normX(hunters[i].tile.x), hunters[i].tile.y)];
+      if (d != undefined && (!best || d < best.steps))
+        best = { ghost: hunters[i], steps: d };
+    }
+    return best;
+  };
+
   var holdGround = function () {
     var h = headingEnum();
     var x = pacman.tile.x;
@@ -226,8 +350,29 @@
       x: normX(x),
       y: y,
       dist: tileDist(x, y),
+      // distance, range and bearing from the heading, as the Doom states give
+      // them (03-gamestate.js placeOf)
+      where: pacmanAgent.placeOf(x, y),
       detail: detail,
     });
+  };
+
+  // An energizer is named by the corner of the maze it sits in, not by its
+  // x,y: the Doom and brief states carry no coordinates, so a name with
+  // coordinates would mean nothing to the model. Two in one corner get a
+  // number. The name is fixed for as long as the energizer exists, so a late
+  // answer still finds it.
+  var energizerName = function (x, y, taken) {
+    var base =
+      (y < map.numRows / 2 ? "upper" : "lower") +
+      " " +
+      (x < map.numCols / 2 ? "left" : "right") +
+      " energizer";
+    var name = base;
+    var n = 1;
+    while (taken[name]) name = base + " " + ++n;
+    taken[name] = true;
+    return name;
   };
 
   // Every place that exists right now. Question menus show a short prefix
@@ -237,6 +382,7 @@
     var list = [];
     var best = null;
     var bestD = Infinity;
+    var taken = {};
     var y, x, tile, d;
     for (y = 0; y < map.numRows; y++) {
       for (x = 0; x < map.numCols; x++) {
@@ -244,7 +390,7 @@
         if (tile == "o") {
           pushPlace(
             list,
-            "energizer " + x + "," + y,
+            energizerName(x, y, taken),
             "energizer",
             x,
             y,
@@ -298,8 +444,15 @@
 
   // Up to six, nearest first inside each rank. Six matches the Doom demo's
   // "walk to" slots.
-  var topPlaces = function () {
+  var topPlaces = function (edibleGhostsOnly) {
     var all = listPlaces();
+    // a ghost worth travelling to is one you can eat; going to a hunting
+    // ghost (or one in the house) is never the point
+    if (edibleGhostsOnly) {
+      all = all.filter(function (p) {
+        return p.kind != "ghost" || p.detail.indexOf("edible") >= 0;
+      });
+    }
     all.sort(function (a, b) {
       var r = rankPlace(a) - rankPlace(b);
       if (r) return r;
@@ -315,13 +468,10 @@
     return null;
   };
 
+  // "frightened and edible: 7 tiles (close), bearing 0 degrees (dead ahead)" —
+  // the same shape as a doom-prose item line
   var placeBlurb = function (p) {
-    return (
-      p.detail +
-      ", about " +
-      Math.round(p.dist * 10) / 10 +
-      " tiles away in a straight line (the path may be longer)"
-    );
+    return p.detail + ": " + pacmanAgent.sentencePlace(p.where);
   };
 
   var nearestWhere = function (places, pred) {
@@ -418,22 +568,67 @@
     };
   };
 
+  // How a place is measured, in the Doom states' own words. A state that
+  // already carries the legend (every doom form, and brief) is not told twice.
+  var measurementSentence = function () {
+    var s =
+      "Each place is described the way the state describes things: its distance in tiles (a straight line, so the maze path may be longer), a range, and a bearing from your current heading. ";
+    var mode = pacmanAgent.settings.stateMode;
+    if (pacmanAgent.stateModesWithLegend.indexOf(mode) < 0) {
+      // the prose state already gives the scale and the speed; a screenshot
+      // state gives neither, so it gets the whole legend here
+      s +=
+        (mode == "text"
+          ? pacmanAgent.bracketSentence()
+          : pacmanAgent.legendSentence()) +
+        " " +
+        pacmanAgent.valuesSentence +
+        " ";
+    }
+    return s;
+  };
+
+  // The way out of danger, offered beside the places while a ghost is hunting.
+  var FLEE_ID = "run away";
+
   var buildGotoQuestions = function () {
     var criteria = {};
-    var places = topPlaces();
+    var places = topPlaces(true);
     var i;
+    // what choosing a place does is said once, in the instructions
     for (i = 0; i < places.length; i++) {
-      criteria[places[i].id] =
-        "follow the shortest maze path there until your next answer. " +
-        placeBlurb(places[i]);
+      criteria[places[i].id] = placeBlurb(places[i]);
     }
+
+    // only while a hunter is close by the maze: offered all the time, the
+    // option has Pac-Man running from a ghost on the far side of the board
+    var near = nearestHunter();
+    var hunter = null;
+    if (near && near.steps <= fleeOffer()) {
+      hunter = findPlace(near.ghost.name);
+      if (hunter) {
+        criteria[FLEE_ID] =
+          "get away from the hunting ghosts. Nearest is " +
+          hunter.id +
+          ", " +
+          near.steps +
+          " steps away by the maze, " +
+          pacmanAgent.sentencePlace(hunter.where);
+      }
+    }
+
     return {
       goto: {
         type: "choice",
         instructions:
           "You are Pac-Man. " +
           latencyClause() +
-          "You only choose a place. Until your next answer the game follows the shortest maze path to it and presses each next step, including the turns. You do not choose the turns. Where should Pac-Man go?",
+          "You only choose a place. Until your next answer the game follows the shortest maze path to it and presses each next step, including the turns. You do not choose the turns. " +
+          (hunter
+            ? "Or choose run away: until your next answer the game heads for the open tiles you can reach before any hunting ghost can, keeping the most room to run. "
+            : "") +
+          measurementSentence() +
+          "Where should Pac-Man go?",
         criteria: criteria,
       },
     };
@@ -606,6 +801,21 @@
     var live = pacmanAgent.liveSteer;
     if (!live || typeof map == "undefined" || !map) return null;
     if (typeof pacman == "undefined" || !pacman.tile) return null;
+    if (live.kind == "flee") {
+      // the danger has passed: stop running and go back to eating
+      var near = nearestHunter();
+      if (!near || near.steps >= fleeRelease()) {
+        pacmanAgent.log(
+          "flee over (" +
+            (near ? "nearest hunter " + near.steps + " steps away" : "no hunter") +
+            ") — heading for the nearest pellet",
+        );
+        pacmanAgent.liveSteer = { kind: "goto", placeId: "nearest pellet" };
+        var back = findPlace("nearest pellet");
+        return back ? stepToward(back.x, back.y) : headingEnum();
+      }
+      return stepFlee();
+    }
     if (live.kind == "goto") {
       var place = findPlace(live.placeId);
       if (!place) return headingEnum();
@@ -632,6 +842,15 @@
     }
     ans = choiceOf(answers, "goto");
     if (ans) {
+      if (ans.choice == FLEE_ID) {
+        var fled = resolvedDir(
+          stepFlee(),
+          "run away from the hunting ghosts",
+          ans,
+        );
+        fled.live = { kind: "flee" };
+        return fled;
+      }
       var place = findPlace(ans.choice);
       if (!place) return null;
       var toward = resolvedDir(

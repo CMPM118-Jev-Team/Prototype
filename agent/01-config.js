@@ -72,6 +72,10 @@ var pacmanAgent = (function () {
     outputMode: "direct", // what the model answers; see pacmanAgent.outputModes
     // in 03b-output.js (direct, intersection, goto, goal)
     instructions: "", // extra text added to every state (the left-panel box)
+    fleeOffer: 8, // goto: offer "run away" only when a hunting ghost is this
+    // many steps away by the maze or fewer (?flee=)
+    fleeRelease: 12, // goto: stop fleeing once every hunter is this many steps
+    // away or more, and go back to the nearest pellet (?fleeend=)
     mode: "realtime", // 'realtime' (never disturb the game) or 'fixed' (the
     // game freezes for each decision — see 04-controller.js)
     hz: 10, // poll rate: how often the model is asked (ONE prompt in
@@ -109,6 +113,14 @@ var pacmanAgent = (function () {
     if (q.state && /^[a-z0-9-]+$/.test(q.state)) settings.stateMode = q.state;
     if (q.output && /^[a-z0-9-]+$/.test(q.output)) settings.outputMode = q.output;
     if (q.mode == "realtime" || q.mode == "fixed") settings.mode = q.mode;
+    if (q.flee) {
+      var fo = parseInt(q.flee, 10);
+      if (fo > 0) settings.fleeOffer = fo;
+    }
+    if (q.fleeend) {
+      var fr = parseInt(q.fleeend, 10);
+      if (fr > 0) settings.fleeRelease = fr;
+    }
     if (q.hz) {
       var hz = parseInt(q.hz, 10);
       if (hz > 0) settings.hz = hz;
