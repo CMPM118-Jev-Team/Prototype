@@ -13,18 +13,18 @@
 //                 plus reverse if that u-turn is not already an exit. Still
 //                 just a direction. A side turn is held for the intersection;
 //                 reverse is applied at once.
-//   goto          One choice: a place (pellet, energizer, fruit, ghost). The
-//                 behavior walks the maze path toward it and steers along the
-//                 first step.
+//   goto          One choice: a place (pellet, energizer, fruit, ghost). Until
+//                 the next answer, the behavior follows the shortest maze path
+//                 to that place and presses each next step, including turns.
 //   goal          Three choices, as in the Doom demo: the goal to maintain,
-//                 a dodge, and a movement. The behavior keeps the goal and
-//                 combines it with the dodge, the movement, and where things
-//                 are now. A dodge into an open tile wins; otherwise an
-//                 explicit "walk to" is a path; otherwise close in / back off
-//                 / hold ground are aimed at the goal's subject. Fleeing
-//                 treats "close in" as moving away, because that is the goal.
-//                 A hunting ghost within 4 tiles overrides closing in on a
-//                 pellet or an energizer.
+//                 a dodge, and a movement. Until the next answer the behavior
+//                 re-reads the maze and combines them. A dodge is locked to
+//                 the compass direction it meant when the answer arrived, and
+//                 wins whenever that next tile is open. Otherwise an explicit
+//                 "walk to" is a path. Otherwise close in / back off / hold
+//                 ground aim at the goal's subject. Fleeing treats "close in"
+//                 as moving away. A hunting ghost within 4 tiles overrides
+//                 closing in or backing off on pellets or an energizer.
 
 (function () {
   var DIR_NAMES = pacmanAgent.DIR_NAMES;
@@ -318,9 +318,9 @@
   var placeBlurb = function (p) {
     return (
       p.detail +
-      ", " +
+      ", about " +
       Math.round(p.dist * 10) / 10 +
-      " tiles away"
+      " tiles away in a straight line (the path may be longer)"
     );
   };
 
@@ -412,7 +412,7 @@
         instructions:
           "You are Pac-Man. " +
           latencyClause() +
-          "Choose the exit at the next intersection. Open exits are listed, and reverse is always listed so you can turn around now. A side turn is held until you get there; a u-turn happens at once.",
+          "Choose one listed compass direction. It is pressed like an arrow key. Straight ahead and a u-turn happen at once. Any other direction is held and taken at the next intersection, then dropped even if that intersection has no such opening, or replaced if a newer answer arrives first. Reverse is always listed so you can turn around now.",
         criteria: criteria,
       },
     };
@@ -423,7 +423,9 @@
     var places = topPlaces();
     var i;
     for (i = 0; i < places.length; i++) {
-      criteria[places[i].id] = "walk there. " + placeBlurb(places[i]);
+      criteria[places[i].id] =
+        "follow the shortest maze path there until your next answer. " +
+        placeBlurb(places[i]);
     }
     return {
       goto: {
@@ -431,7 +433,7 @@
         instructions:
           "You are Pac-Man. " +
           latencyClause() +
-          "You only choose a place. The game walks the maze path and steers the first step. Where should Pac-Man go?",
+          "You only choose a place. Until your next answer the game follows the shortest maze path to it and presses each next step, including the turns. You do not choose the turns. Where should Pac-Man go?",
         criteria: criteria,
       },
     };
@@ -448,7 +450,9 @@
     var places = topPlaces();
     var i;
     for (i = 0; i < places.length; i++) {
-      walk["walk to " + places[i].id] = placeBlurb(places[i]);
+      walk["walk to " + places[i].id] =
+        "follow the shortest maze path there until your next answer. " +
+        placeBlurb(places[i]);
     }
     var movement = {
       "hold ground": "keep your heading while the way ahead is open",
@@ -464,7 +468,14 @@
           "You are Pac-Man. " +
           goalSentence() +
           latencyClause() +
-          "Considering the player, ghosts, and items, what is the highest priority goal right now? Keep the goal you name until you change it.",
+          "Name the goal to keep until you change it. Until your next answer the game re-reads the maze and combines this goal with your dodge and your movement. " +
+          "A dodge is locked to the compass direction it meant when the answer arrived, and Pac-Man takes it whenever that next tile is open; a dodge beats the movement. " +
+          "Otherwise a walk-to follows the shortest maze path to that place, including later turns. " +
+          "Otherwise close in walks toward the goal's subject, back off walks away from it, and hold ground keeps the current heading while the way ahead is open. " +
+          "The subject is the nearest pellet for eat pellets and clear the level, the nearest energizer or else a pellet for grab energizer, an edible ghost or else the nearest hunter for chase ghost, and the nearest hunter for flee. " +
+          "When the goal is flee, close in means move away. " +
+          "A hunting ghost within 4 tiles makes Pac-Man move away from that ghost instead of closing in or backing off on pellets or an energizer. Hold ground and a walk-to are not overridden. " +
+          "What is the highest priority goal right now?",
         criteria: {
           "eat pellets": "work down the pellets",
           "grab energizer": "get an energizer so the ghosts become edible",
@@ -477,7 +488,7 @@
         type: "choice",
         instructions:
           goalSentence() +
-          "What does this exact moment call for? A dodge is relative to your heading and happens only if that way is open.",
+          "A dodge is relative to your heading right now. When the answer arrives it becomes a fixed compass direction and is pressed whenever that next tile is open, until your next answer. It beats the movement. If that tile is not open, the movement is used instead.",
         criteria: {
           "carry on": "no dodge",
           "dodge left": "step to your left",
@@ -489,7 +500,7 @@
         type: "choice",
         instructions:
           goalSentence() +
-          "What does this exact moment call for? Choose in line with the goal.",
+          "Used when you are not dodging into an open tile, and kept until your next answer. close in, back off, and hold ground aim at the goal's subject. A walk-to follows the shortest maze path, including later turns. When the goal is flee, close in moves away. A hunting ghost within 4 tiles overrides close in and back off while the goal is eat pellets, clear the level, or grab energizer.",
         criteria: movement,
       },
     };
@@ -513,21 +524,16 @@
     return null;
   };
 
-  // Goal plus this moment's dodge and movement, read against the maze now.
-  var resolveGoal = function (answers) {
-    var goalAns = choiceOf(answers, "goal");
-    var dodgeAns = choiceOf(answers, "dodge");
-    var moveAns = choiceOf(answers, "movement");
-    if (goalAns) pacmanAgent.goal = goalAns.choice;
-    var goal = pacmanAgent.goal || "eat pellets";
-    var dodge = dodgeAns ? dodgeAns.choice : "carry on";
-    var movement = moveAns ? moveAns.choice : "close in";
+  // One direction from a stored goal behavior, read against the maze now.
+  // dodgeAbs is the compass direction the dodge meant when the answer
+  // arrived (null when the dodge was "carry on"); it does not rotate as
+  // the heading changes.
+  var combineGoal = function (goal, dodgeAbs, movement) {
     var places = listPlaces();
     var dirEnum = null;
 
-    var dodgeEnum = dodgeDir(dodge);
-    if (dodgeEnum != null && stepTo(pacman.tile.x, pacman.tile.y, dodgeEnum))
-      dirEnum = dodgeEnum;
+    if (dodgeAbs != null && stepTo(pacman.tile.x, pacman.tile.y, dodgeAbs))
+      dirEnum = dodgeAbs;
 
     var walked = null;
     if (dirEnum == null && movement.indexOf("walk to ") == 0) {
@@ -543,7 +549,13 @@
     var gathering =
       goal == "eat pellets" || goal == "clear the level" || goal == "grab energizer";
 
-    if (dirEnum == null && hunterClose && gathering && movement != "hold ground")
+    if (
+      dirEnum == null &&
+      hunterClose &&
+      gathering &&
+      movement != "hold ground" &&
+      movement.indexOf("walk to ") != 0
+    )
       dirEnum = stepAway(hunter.x, hunter.y);
 
     if (dirEnum == null) {
@@ -554,15 +566,54 @@
         dirEnum = subject ? stepToward(subject.x, subject.y) : holdGround();
       else dirEnum = subject ? stepToward(subject.x, subject.y) : holdGround();
     }
+    return { dirEnum: dirEnum, walked: walked };
+  };
 
+  // Goal plus this moment's dodge and movement. The dodge is frozen as a
+  // compass direction; the path is recomputed every frame (see stepLive)
+  // until the next answer replaces this behavior.
+  var resolveGoal = function (answers) {
+    var goalAns = choiceOf(answers, "goal");
+    var dodgeAns = choiceOf(answers, "dodge");
+    var moveAns = choiceOf(answers, "movement");
+    if (goalAns) pacmanAgent.goal = goalAns.choice;
+    var goal = pacmanAgent.goal || "eat pellets";
+    var dodge = dodgeAns ? dodgeAns.choice : "carry on";
+    var movement = moveAns ? moveAns.choice : "close in";
+    var dodgeAbs = dodgeDir(dodge);
+    var combined = combineGoal(goal, dodgeAbs, movement);
     var said = "goal " + goal + "; " + dodge + "; " + movement;
     var statsFrom =
-      dodgeEnum != null && dirEnum == dodgeEnum
+      dodgeAbs != null && combined.dirEnum == dodgeAbs
         ? dodgeAns
-        : walked
+        : combined.walked
           ? moveAns
           : moveAns || dodgeAns || goalAns;
-    return resolvedDir(dirEnum, said, statsFrom);
+    var resolved = resolvedDir(combined.dirEnum, said, statsFrom);
+    resolved.live = {
+      kind: "goal",
+      goal: goal,
+      dodgeAbs: dodgeAbs,
+      movement: movement,
+    };
+    return resolved;
+  };
+
+  // Re-steer a goto or goal until the next answer. Called every game frame
+  // from the controller while pacmanAgent.liveSteer is set.
+  pacmanAgent.liveSteer = null;
+  pacmanAgent.stepLive = function () {
+    var live = pacmanAgent.liveSteer;
+    if (!live || typeof map == "undefined" || !map) return null;
+    if (typeof pacman == "undefined" || !pacman.tile) return null;
+    if (live.kind == "goto") {
+      var place = findPlace(live.placeId);
+      if (!place) return headingEnum();
+      return stepToward(place.x, place.y);
+    }
+    if (live.kind == "goal")
+      return combineGoal(live.goal, live.dodgeAbs, live.movement).dirEnum;
+    return null;
   };
 
   // Turn whatever the model returned into one direction. Matches the question
@@ -583,11 +634,13 @@
     if (ans) {
       var place = findPlace(ans.choice);
       if (!place) return null;
-      return resolvedDir(
+      var toward = resolvedDir(
         stepToward(place.x, place.y),
         "walk to " + place.id,
         ans,
       );
+      toward.live = { kind: "goto", placeId: place.id };
+      return toward;
     }
     if (answers.goal || answers.dodge || answers.movement)
       return resolveGoal(answers);

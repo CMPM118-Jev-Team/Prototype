@@ -239,11 +239,11 @@ so a swap is a test of the scene, not of the action. `u` cycles them.
 | `shot`       | That prose, plus an annotated screenshot.                                            |
 | `doom`       | Doom-demo JSON: tile as the map unit, distance brackets, bearing, tick, speed, how often a decision is made, the player, walls relative to heading, velocity, every ghost, energizers, the nearest pellet, the next intersection, recent decisions. |
 | `doom-frame` | That live frame as JSON, without the physics legend or the decision history.        |
-| `doom-local` | Same JSON, but a ghost or item farther than 8 tiles or behind a wall is `remembered` (out of view) instead of listed in front of you. Its position is where it is now. |
+| `doom-local` | Same JSON, but a ghost or item farther than 8 tiles (past close) or behind a wall is `remembered` (out of view) instead of listed in front of you. Its position is where it is now. |
 | `doom-prose` | The frame as sentences: heading-relative walls, range, bearing.                      |
 | `brief`      | Heading, walls, the next intersection, and one line per ghost.                       |
 
-Distance words are guidelines: **contact** is 1 tile or closer, **close** is 2 to 4, **medium** is 5 to 8, **far** is 9 or more. Bearing is relative to the heading: 0 is straight ahead, positive is left, negative is right.
+Distance words are guidelines: **contact** is 1 tile or closer, **close** is 2 to 8, **medium** is 9 to 16, **far** is 17 or more. Bearing is relative to the heading: 0 is straight ahead, positive is left, negative is right.
 
 ## Output modes
 
@@ -253,10 +253,10 @@ The state form is what the model reads. The output mode is what it answers, and 
 | -------------- | ------------------------------------------------------ | ------------------------------------------------------------------------ |
 | `direct`       | up, down, left, or right                               | that direction                                                           |
 | `intersection` | an open exit at the next intersection, and reverse if that u-turn is not already an exit | that direction; a side turn is held until the intersection, a reverse happens at once |
-| `goto`         | a place: pellet, energizer, fruit, or ghost            | walk the maze path toward it, and steer the first step                   |
-| `goal`         | a goal, a dodge, and a movement, including walk-to     | keep the goal, then combine the dodge, the movement, and the maze       |
+| `goto`         | a place: pellet, energizer, fruit, or ghost            | until the next answer, follow the shortest maze path and press each next step |
+| `goal`         | a goal, a dodge, and a movement, including walk-to     | until the next answer, re-read the maze and combine the three choices    |
 
-In `goal`, a dodge into an open tile wins. Otherwise an explicit walk-to is a path. Otherwise close in, back off, and hold ground aim at the goal's subject (the nearest pellet, energizer, or ghost). Fleeing treats close in as moving away. A hunting ghost within 4 tiles overrides closing in on a pellet or an energizer.
+In `goal`, a dodge is locked to the compass direction it meant when the answer arrived, and it wins whenever that next tile is open. Otherwise an explicit walk-to is a path. Otherwise close in, back off, and hold ground aim at the goal's subject (the nearest pellet, energizer, or ghost). Fleeing treats close in as moving away. A hunting ghost within 4 tiles overrides closing in or backing off on a pellet or an energizer. The questions sent to the model say this.
 
 ## Reducing latency
 

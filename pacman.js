@@ -13870,8 +13870,9 @@ var pacmanAgent = (function () {
 //                  relative walls, velocity, every ghost, the nearby items,
 //                  the next intersection, and recent decisions
 //       doom-frame that live frame without the legend or the history
-//       doom-local the same, but anything farther than 8 tiles or behind a
-//                  wall is listed as out of view instead of in front of you
+//       doom-local the same, but anything farther than 8 tiles (past close)
+//                  or behind a wall is listed as out of view instead of in
+//                  front of you
 //       doom-prose the doom-frame facts as sentences
 //       brief      heading, walls, the next intersection, one line per ghost
 //     NO ASCII maze: probing showed clef-flash does not read it (see
@@ -14188,10 +14189,12 @@ var pacmanAgent = (function () {
           "s: " +
           (e.summary ? e.summary + " → " + e.dir : e.dir) +
           " — " +
-          (e.kind == "turn"
-            ? "turn for the next intersection, " +
-              pacmanAgent.describeDecisionOutcome(e.outcome)
-            : e.kind + ", applied instantly (went through)"),
+          (e.kind == "behavior"
+            ? "the game keeps steering this until your next answer"
+            : e.kind == "turn"
+              ? "turn for the next intersection, " +
+                pacmanAgent.describeDecisionOutcome(e.outcome)
+              : e.kind + ", applied instantly (went through)"),
       );
     }
     return lines;
@@ -14202,12 +14205,13 @@ var pacmanAgent = (function () {
   // Doom-demo shapes of this same frame. Distance words are guidelines, not
   // measurements taken from one snapshot:
   //   contact  1 tile or closer   touch range
-  //   close    2 to 4 tiles       a turn or two away
-  //   medium   5 to 8 tiles       a meaningful run
-  //   far      9 tiles or more    distant
+  //   close    2 to 8 tiles       a short run, a few turns away
+  //   medium   9 to 16 tiles      across part of the maze
+  //   far      17 tiles or more   the far side of the maze
   // Bearing is relative to the current heading: 0 straight ahead, positive
-  // left, negative right. "In view" (doom-local) means within 8 tiles and a
-  // clear straight line of floor; the position given is where it is now.
+  // left, negative right. "In view" (doom-local) means within 8 tiles
+  // (contact or close) and a clear straight line of floor; the position
+  // given is where it is now.
 
   var VIEW_TILES = 8;
 
@@ -14237,8 +14241,8 @@ var pacmanAgent = (function () {
 
   var rangeBracket = function (dist) {
     if (dist <= 1) return "contact";
-    if (dist <= 4) return "close";
-    if (dist <= 8) return "medium";
+    if (dist <= 8) return "close";
+    if (dist <= 16) return "medium";
     return "far";
   };
 
@@ -14389,18 +14393,18 @@ var pacmanAgent = (function () {
         },
         {
           name: "close",
-          span: "2 to 4 tiles",
-          meaning: "nearby; a turn or two away",
+          span: "2 to 8 tiles",
+          meaning: "nearby; a short run, a few turns away",
         },
         {
           name: "medium",
-          span: "5 to 8 tiles",
-          meaning: "a meaningful run",
+          span: "9 to 16 tiles",
+          meaning: "across part of the maze",
         },
         {
           name: "far",
-          span: "9 tiles or more",
-          meaning: "distant",
+          span: "17 tiles or more",
+          meaning: "the far side of the maze",
         },
       ],
       relative_bearing_degrees: {
@@ -14430,7 +14434,7 @@ var pacmanAgent = (function () {
     };
     if (local)
       block.view =
-        "In view means within 8 tiles and not blocked by a wall. Everything else is listed under remembered, at where it is right now.";
+        "In view means within 8 tiles (contact or close) and not blocked by a wall. Everything else is listed under remembered, at where it is right now.";
     return block;
   };
 
@@ -14615,12 +14619,14 @@ var pacmanAgent = (function () {
         t_seconds: round1(e.t),
         direction: e.summary ? e.summary + " → " + e.dir : e.dir,
         result:
-          e.kind == "turn"
-            ? "turn for the next intersection, " +
-              (pacmanAgent.describeDecisionOutcome
-                ? pacmanAgent.describeDecisionOutcome(e.outcome)
-                : String(e.outcome || ""))
-            : e.kind + ", applied instantly",
+          e.kind == "behavior"
+            ? "the game keeps steering this until your next answer"
+            : e.kind == "turn"
+              ? "turn for the next intersection, " +
+                (pacmanAgent.describeDecisionOutcome
+                  ? pacmanAgent.describeDecisionOutcome(e.outcome)
+                  : String(e.outcome || ""))
+              : e.kind + ", applied instantly",
       });
     }
     return out;
@@ -14664,7 +14670,7 @@ var pacmanAgent = (function () {
   };
 
   var bracketSentence =
-    "Contact is 1 tile or closer (touch range), close is 2 to 4 tiles, medium is 5 to 8, far is 9 or more. Bearing 0 is straight ahead, positive is left, negative is right.";
+    "Contact is 1 tile or closer (touch range), close is 2 to 8 tiles, medium is 9 to 16, far is 17 or more. Bearing 0 is straight ahead, positive is left, negative is right.";
 
   var proseFrame = function (inter, enemies, items, brief) {
     var lines = [];
@@ -14869,7 +14875,9 @@ var pacmanAgent = (function () {
         instructions:
           "You are Pac-Man in a live game. " +
           latencySentence +
-          "Eat pellets to clear the level, avoid ghosts (they kill on touch unless frightened), and don't corner yourself. Which direction should Pac-Man travel?",
+          "Eat pellets to clear the level, avoid ghosts (they kill on touch unless frightened), and don't corner yourself. " +
+          "Your answer is a compass direction and is pressed like an arrow key: straight and a u-turn happen at once, and a side turn is held until the next intersection, then dropped even if that opening is not there, or replaced if a newer answer arrives first. " +
+          "Which direction should Pac-Man travel?",
         criteria: criteria,
       },
     };
@@ -15020,18 +15028,18 @@ var pacmanAgent = (function () {
 //                 plus reverse if that u-turn is not already an exit. Still
 //                 just a direction. A side turn is held for the intersection;
 //                 reverse is applied at once.
-//   goto          One choice: a place (pellet, energizer, fruit, ghost). The
-//                 behavior walks the maze path toward it and steers along the
-//                 first step.
+//   goto          One choice: a place (pellet, energizer, fruit, ghost). Until
+//                 the next answer, the behavior follows the shortest maze path
+//                 to that place and presses each next step, including turns.
 //   goal          Three choices, as in the Doom demo: the goal to maintain,
-//                 a dodge, and a movement. The behavior keeps the goal and
-//                 combines it with the dodge, the movement, and where things
-//                 are now. A dodge into an open tile wins; otherwise an
-//                 explicit "walk to" is a path; otherwise close in / back off
-//                 / hold ground are aimed at the goal's subject. Fleeing
-//                 treats "close in" as moving away, because that is the goal.
-//                 A hunting ghost within 4 tiles overrides closing in on a
-//                 pellet or an energizer.
+//                 a dodge, and a movement. Until the next answer the behavior
+//                 re-reads the maze and combines them. A dodge is locked to
+//                 the compass direction it meant when the answer arrived, and
+//                 wins whenever that next tile is open. Otherwise an explicit
+//                 "walk to" is a path. Otherwise close in / back off / hold
+//                 ground aim at the goal's subject. Fleeing treats "close in"
+//                 as moving away. A hunting ghost within 4 tiles overrides
+//                 closing in or backing off on pellets or an energizer.
 
 (function () {
   var DIR_NAMES = pacmanAgent.DIR_NAMES;
@@ -15325,9 +15333,9 @@ var pacmanAgent = (function () {
   var placeBlurb = function (p) {
     return (
       p.detail +
-      ", " +
+      ", about " +
       Math.round(p.dist * 10) / 10 +
-      " tiles away"
+      " tiles away in a straight line (the path may be longer)"
     );
   };
 
@@ -15419,7 +15427,7 @@ var pacmanAgent = (function () {
         instructions:
           "You are Pac-Man. " +
           latencyClause() +
-          "Choose the exit at the next intersection. Open exits are listed, and reverse is always listed so you can turn around now. A side turn is held until you get there; a u-turn happens at once.",
+          "Choose one listed compass direction. It is pressed like an arrow key. Straight ahead and a u-turn happen at once. Any other direction is held and taken at the next intersection, then dropped even if that intersection has no such opening, or replaced if a newer answer arrives first. Reverse is always listed so you can turn around now.",
         criteria: criteria,
       },
     };
@@ -15430,7 +15438,9 @@ var pacmanAgent = (function () {
     var places = topPlaces();
     var i;
     for (i = 0; i < places.length; i++) {
-      criteria[places[i].id] = "walk there. " + placeBlurb(places[i]);
+      criteria[places[i].id] =
+        "follow the shortest maze path there until your next answer. " +
+        placeBlurb(places[i]);
     }
     return {
       goto: {
@@ -15438,7 +15448,7 @@ var pacmanAgent = (function () {
         instructions:
           "You are Pac-Man. " +
           latencyClause() +
-          "You only choose a place. The game walks the maze path and steers the first step. Where should Pac-Man go?",
+          "You only choose a place. Until your next answer the game follows the shortest maze path to it and presses each next step, including the turns. You do not choose the turns. Where should Pac-Man go?",
         criteria: criteria,
       },
     };
@@ -15455,7 +15465,9 @@ var pacmanAgent = (function () {
     var places = topPlaces();
     var i;
     for (i = 0; i < places.length; i++) {
-      walk["walk to " + places[i].id] = placeBlurb(places[i]);
+      walk["walk to " + places[i].id] =
+        "follow the shortest maze path there until your next answer. " +
+        placeBlurb(places[i]);
     }
     var movement = {
       "hold ground": "keep your heading while the way ahead is open",
@@ -15471,7 +15483,14 @@ var pacmanAgent = (function () {
           "You are Pac-Man. " +
           goalSentence() +
           latencyClause() +
-          "Considering the player, ghosts, and items, what is the highest priority goal right now? Keep the goal you name until you change it.",
+          "Name the goal to keep until you change it. Until your next answer the game re-reads the maze and combines this goal with your dodge and your movement. " +
+          "A dodge is locked to the compass direction it meant when the answer arrived, and Pac-Man takes it whenever that next tile is open; a dodge beats the movement. " +
+          "Otherwise a walk-to follows the shortest maze path to that place, including later turns. " +
+          "Otherwise close in walks toward the goal's subject, back off walks away from it, and hold ground keeps the current heading while the way ahead is open. " +
+          "The subject is the nearest pellet for eat pellets and clear the level, the nearest energizer or else a pellet for grab energizer, an edible ghost or else the nearest hunter for chase ghost, and the nearest hunter for flee. " +
+          "When the goal is flee, close in means move away. " +
+          "A hunting ghost within 4 tiles makes Pac-Man move away from that ghost instead of closing in or backing off on pellets or an energizer. Hold ground and a walk-to are not overridden. " +
+          "What is the highest priority goal right now?",
         criteria: {
           "eat pellets": "work down the pellets",
           "grab energizer": "get an energizer so the ghosts become edible",
@@ -15484,7 +15503,7 @@ var pacmanAgent = (function () {
         type: "choice",
         instructions:
           goalSentence() +
-          "What does this exact moment call for? A dodge is relative to your heading and happens only if that way is open.",
+          "A dodge is relative to your heading right now. When the answer arrives it becomes a fixed compass direction and is pressed whenever that next tile is open, until your next answer. It beats the movement. If that tile is not open, the movement is used instead.",
         criteria: {
           "carry on": "no dodge",
           "dodge left": "step to your left",
@@ -15496,7 +15515,7 @@ var pacmanAgent = (function () {
         type: "choice",
         instructions:
           goalSentence() +
-          "What does this exact moment call for? Choose in line with the goal.",
+          "Used when you are not dodging into an open tile, and kept until your next answer. close in, back off, and hold ground aim at the goal's subject. A walk-to follows the shortest maze path, including later turns. When the goal is flee, close in moves away. A hunting ghost within 4 tiles overrides close in and back off while the goal is eat pellets, clear the level, or grab energizer.",
         criteria: movement,
       },
     };
@@ -15520,21 +15539,16 @@ var pacmanAgent = (function () {
     return null;
   };
 
-  // Goal plus this moment's dodge and movement, read against the maze now.
-  var resolveGoal = function (answers) {
-    var goalAns = choiceOf(answers, "goal");
-    var dodgeAns = choiceOf(answers, "dodge");
-    var moveAns = choiceOf(answers, "movement");
-    if (goalAns) pacmanAgent.goal = goalAns.choice;
-    var goal = pacmanAgent.goal || "eat pellets";
-    var dodge = dodgeAns ? dodgeAns.choice : "carry on";
-    var movement = moveAns ? moveAns.choice : "close in";
+  // One direction from a stored goal behavior, read against the maze now.
+  // dodgeAbs is the compass direction the dodge meant when the answer
+  // arrived (null when the dodge was "carry on"); it does not rotate as
+  // the heading changes.
+  var combineGoal = function (goal, dodgeAbs, movement) {
     var places = listPlaces();
     var dirEnum = null;
 
-    var dodgeEnum = dodgeDir(dodge);
-    if (dodgeEnum != null && stepTo(pacman.tile.x, pacman.tile.y, dodgeEnum))
-      dirEnum = dodgeEnum;
+    if (dodgeAbs != null && stepTo(pacman.tile.x, pacman.tile.y, dodgeAbs))
+      dirEnum = dodgeAbs;
 
     var walked = null;
     if (dirEnum == null && movement.indexOf("walk to ") == 0) {
@@ -15550,7 +15564,13 @@ var pacmanAgent = (function () {
     var gathering =
       goal == "eat pellets" || goal == "clear the level" || goal == "grab energizer";
 
-    if (dirEnum == null && hunterClose && gathering && movement != "hold ground")
+    if (
+      dirEnum == null &&
+      hunterClose &&
+      gathering &&
+      movement != "hold ground" &&
+      movement.indexOf("walk to ") != 0
+    )
       dirEnum = stepAway(hunter.x, hunter.y);
 
     if (dirEnum == null) {
@@ -15561,15 +15581,54 @@ var pacmanAgent = (function () {
         dirEnum = subject ? stepToward(subject.x, subject.y) : holdGround();
       else dirEnum = subject ? stepToward(subject.x, subject.y) : holdGround();
     }
+    return { dirEnum: dirEnum, walked: walked };
+  };
 
+  // Goal plus this moment's dodge and movement. The dodge is frozen as a
+  // compass direction; the path is recomputed every frame (see stepLive)
+  // until the next answer replaces this behavior.
+  var resolveGoal = function (answers) {
+    var goalAns = choiceOf(answers, "goal");
+    var dodgeAns = choiceOf(answers, "dodge");
+    var moveAns = choiceOf(answers, "movement");
+    if (goalAns) pacmanAgent.goal = goalAns.choice;
+    var goal = pacmanAgent.goal || "eat pellets";
+    var dodge = dodgeAns ? dodgeAns.choice : "carry on";
+    var movement = moveAns ? moveAns.choice : "close in";
+    var dodgeAbs = dodgeDir(dodge);
+    var combined = combineGoal(goal, dodgeAbs, movement);
     var said = "goal " + goal + "; " + dodge + "; " + movement;
     var statsFrom =
-      dodgeEnum != null && dirEnum == dodgeEnum
+      dodgeAbs != null && combined.dirEnum == dodgeAbs
         ? dodgeAns
-        : walked
+        : combined.walked
           ? moveAns
           : moveAns || dodgeAns || goalAns;
-    return resolvedDir(dirEnum, said, statsFrom);
+    var resolved = resolvedDir(combined.dirEnum, said, statsFrom);
+    resolved.live = {
+      kind: "goal",
+      goal: goal,
+      dodgeAbs: dodgeAbs,
+      movement: movement,
+    };
+    return resolved;
+  };
+
+  // Re-steer a goto or goal until the next answer. Called every game frame
+  // from the controller while pacmanAgent.liveSteer is set.
+  pacmanAgent.liveSteer = null;
+  pacmanAgent.stepLive = function () {
+    var live = pacmanAgent.liveSteer;
+    if (!live || typeof map == "undefined" || !map) return null;
+    if (typeof pacman == "undefined" || !pacman.tile) return null;
+    if (live.kind == "goto") {
+      var place = findPlace(live.placeId);
+      if (!place) return headingEnum();
+      return stepToward(place.x, place.y);
+    }
+    if (live.kind == "goal")
+      return combineGoal(live.goal, live.dodgeAbs, live.movement).dirEnum;
+    return null;
   };
 
   // Turn whatever the model returned into one direction. Matches the question
@@ -15590,11 +15649,13 @@ var pacmanAgent = (function () {
     if (ans) {
       var place = findPlace(ans.choice);
       if (!place) return null;
-      return resolvedDir(
+      var toward = resolvedDir(
         stepToward(place.x, place.y),
         "walk to " + place.id,
         ans,
       );
+      toward.live = { kind: "goto", placeId: place.id };
+      return toward;
     }
     if (answers.goal || answers.dodge || answers.movement)
       return resolveGoal(answers);
@@ -15779,6 +15840,22 @@ var pacmanAgent = (function () {
       } catch (e) {
         /* never let the agent break a frame */
       }
+      // After the one-shot turn is consumed, a goto/goal behavior presses
+      // the step the maze calls for right now. This is what the questions
+      // told the model it would do until the next answer.
+      try {
+        if (
+          running &&
+          pacmanAgent.liveSteer &&
+          pacmanAgent.stepLive &&
+          canPoll()
+        ) {
+          var liveDir = pacmanAgent.stepLive();
+          if (liveDir != null) pacman.setInputDir(liveDir);
+        }
+      } catch (e) {
+        /* never let the agent break a frame */
+      }
       try {
         fixedPoll(false);
       } catch (e) {
@@ -15913,12 +15990,13 @@ var pacmanAgent = (function () {
     // a still-held turn that never reached an intersection: replaced now
     if (pending) settle(pending, "replaced");
 
+    var live = resolved.live || null;
     var entry = {
       t: pacmanAgent.gameSeconds(),
       dir: resolved.dirName,
       summary: resolved.summary,
-      kind: kind,
-      outcome: kind == "turn" ? "held" : "instant",
+      kind: live ? "behavior" : kind,
+      outcome: live ? "following" : kind == "turn" ? "held" : "instant",
     };
     history.push(entry);
     if (history.length > HISTORY_KEPT) history.shift();
@@ -15934,7 +16012,13 @@ var pacmanAgent = (function () {
       ms: res.ms,
     };
 
-    if (kind == "turn") {
+    // goto and goal keep steering themselves every frame (stepLive). A
+    // one-shot direction is a held turn only when it is not already the
+    // heading; the live behavior must not be cleared at the next corner.
+    pacmanAgent.liveSteer = live;
+    if (live) {
+      pacmanAgent.pendingDecision = null;
+    } else if (kind == "turn") {
       pending = {
         dirEnum: D,
         fromX: pacman.tile.x,
@@ -16033,7 +16117,7 @@ var pacmanAgent = (function () {
   var setIntervalRate = function () {
     if (intervalId) clearInterval(intervalId);
     intervalId = 0;
-    if (!running || !isFixed()) return; // fixed mode has no wall-clock timer
+    if (!running || isFixed()) return; // fixed mode polls on game frames, not this timer
     intervalId = setInterval(poll, Math.round(1000 / pacmanAgent.settings.hz));
   };
 
@@ -16052,6 +16136,7 @@ var pacmanAgent = (function () {
     pacmanAgent.decisionIntervalMs = DECISION_INTERVAL_START_MS;
     lastDecisionGameS = null;
     pacmanAgent.pendingDecision = null;
+    pacmanAgent.liveSteer = null;
     inFlight = 0;
     flightStart = 0;
     agentHold = false;
@@ -16075,6 +16160,7 @@ var pacmanAgent = (function () {
     if (pending) settle(pending, "reset");
     pending = null;
     pacmanAgent.pendingDecision = null;
+    pacmanAgent.liveSteer = null;
     if (typeof pacman != "undefined") {
       pacman.clearInputDir(undefined); // release the "held key"
     }
@@ -16327,7 +16413,10 @@ var pacmanAgent = (function () {
           "border:1px solid #262b33;border-radius:6px;background:#0b0d11;overflow:hidden}",
         ".ag-head{flex:none;padding:6px 10px;font-size:11px;letter-spacing:.14em;color:#8cf;" +
           "border-bottom:1px solid #262b33;background:#141821}",
-        ".ag-body{flex:1;display:flex;flex-direction:column;min-height:0;padding:8px;gap:7px;overflow:hidden}",
+        ".ag-body{flex:1;display:flex;flex-direction:column;min-height:0;padding:8px;gap:7px;" +
+          "overflow-y:auto;scrollbar-width:thin}",
+        ".ag-body::-webkit-scrollbar{width:8px}",
+        ".ag-body::-webkit-scrollbar-thumb{background:#22272f;border-radius:4px}",
         ".ag-lab{flex:none;color:#5a6270;font-size:10px;letter-spacing:.06em}",
         ".ag-row{flex:none;display:flex;align-items:center;gap:6px;flex-wrap:wrap}",
         ".ag-row label{color:#8b93a3}",
@@ -16391,7 +16480,7 @@ var pacmanAgent = (function () {
         ".ag-lat.over .led{background:#d34848;box-shadow:0 0 6px #d34848}",
         ".ag-lat.over .sub{color:#c98080}",
         "@keyframes agpulse{0%,100%{box-shadow:0 0 0 0 rgba(211,72,72,0)}" +
-          "50%{box-shadow:0 0 0 3px rgba(211,72,72,.35)}",
+          "50%{box-shadow:0 0 0 3px rgba(211,72,72,.35)}}",
         // held-turn strip ("holding left since t=12.8s …") — same shape as the
         // last-choice strip, different tint
         ".ag-hold{background:#0c1218;border-color:#1c2730}",
@@ -16403,15 +16492,15 @@ var pacmanAgent = (function () {
         ".ag-hist{flex:1 1 88px;min-height:88px;scrollbar-width:thin}",
         ".ag-hist::-webkit-scrollbar{width:8px}",
         ".ag-hist::-webkit-scrollbar-thumb{background:#22272f;border-radius:4px}",
-        // content boxes: everything shown at once; scroll silently if unavoidable
+        // state, questions, answers, history: scroll inside the box
         ".ag-pre{background:#06070a;border:1px solid #191d24;border-radius:4px;padding:6px;margin:0;" +
           "white-space:pre-wrap;word-break:break-word;overflow:auto;font-size:10px;line-height:1.4;" +
-          "color:#9fb0c0;scrollbar-width:none}",
-        ".ag-pre::-webkit-scrollbar{display:none}",
+          "color:#9fb0c0;scrollbar-width:thin}",
+        ".ag-pre::-webkit-scrollbar{width:8px}",
+        ".ag-pre::-webkit-scrollbar-thumb{background:#22272f;border-radius:4px}",
         ".ag-state{flex:1 1 auto;min-height:120px}",
-        // fixed heights: content scrolls inside (scrollbars stay hidden) —
-        // the questions/answers boxes never resize with their text, so the
-        // left-panel layout cannot jump while playing
+        // fixed heights: the questions/answers boxes scroll inside and never
+        // resize with their text, so the left-panel layout cannot jump
         ".ag-q{flex:none;height:150px}",
         ".ag-a{flex:none;height:72px}",
         ".ag-shot{display:flex;justify-content:center;background:#06070a;border:1px solid #191d24;" +

@@ -11,8 +11,9 @@
 //                  relative walls, velocity, every ghost, the nearby items,
 //                  the next intersection, and recent decisions
 //       doom-frame that live frame without the legend or the history
-//       doom-local the same, but anything farther than 8 tiles or behind a
-//                  wall is listed as out of view instead of in front of you
+//       doom-local the same, but anything farther than 8 tiles (past close)
+//                  or behind a wall is listed as out of view instead of in
+//                  front of you
 //       doom-prose the doom-frame facts as sentences
 //       brief      heading, walls, the next intersection, one line per ghost
 //     NO ASCII maze: probing showed clef-flash does not read it (see
@@ -329,10 +330,12 @@
           "s: " +
           (e.summary ? e.summary + " → " + e.dir : e.dir) +
           " — " +
-          (e.kind == "turn"
-            ? "turn for the next intersection, " +
-              pacmanAgent.describeDecisionOutcome(e.outcome)
-            : e.kind + ", applied instantly (went through)"),
+          (e.kind == "behavior"
+            ? "the game keeps steering this until your next answer"
+            : e.kind == "turn"
+              ? "turn for the next intersection, " +
+                pacmanAgent.describeDecisionOutcome(e.outcome)
+              : e.kind + ", applied instantly (went through)"),
       );
     }
     return lines;
@@ -343,12 +346,13 @@
   // Doom-demo shapes of this same frame. Distance words are guidelines, not
   // measurements taken from one snapshot:
   //   contact  1 tile or closer   touch range
-  //   close    2 to 4 tiles       a turn or two away
-  //   medium   5 to 8 tiles       a meaningful run
-  //   far      9 tiles or more    distant
+  //   close    2 to 8 tiles       a short run, a few turns away
+  //   medium   9 to 16 tiles      across part of the maze
+  //   far      17 tiles or more   the far side of the maze
   // Bearing is relative to the current heading: 0 straight ahead, positive
-  // left, negative right. "In view" (doom-local) means within 8 tiles and a
-  // clear straight line of floor; the position given is where it is now.
+  // left, negative right. "In view" (doom-local) means within 8 tiles
+  // (contact or close) and a clear straight line of floor; the position
+  // given is where it is now.
 
   var VIEW_TILES = 8;
 
@@ -378,8 +382,8 @@
 
   var rangeBracket = function (dist) {
     if (dist <= 1) return "contact";
-    if (dist <= 4) return "close";
-    if (dist <= 8) return "medium";
+    if (dist <= 8) return "close";
+    if (dist <= 16) return "medium";
     return "far";
   };
 
@@ -530,18 +534,18 @@
         },
         {
           name: "close",
-          span: "2 to 4 tiles",
-          meaning: "nearby; a turn or two away",
+          span: "2 to 8 tiles",
+          meaning: "nearby; a short run, a few turns away",
         },
         {
           name: "medium",
-          span: "5 to 8 tiles",
-          meaning: "a meaningful run",
+          span: "9 to 16 tiles",
+          meaning: "across part of the maze",
         },
         {
           name: "far",
-          span: "9 tiles or more",
-          meaning: "distant",
+          span: "17 tiles or more",
+          meaning: "the far side of the maze",
         },
       ],
       relative_bearing_degrees: {
@@ -571,7 +575,7 @@
     };
     if (local)
       block.view =
-        "In view means within 8 tiles and not blocked by a wall. Everything else is listed under remembered, at where it is right now.";
+        "In view means within 8 tiles (contact or close) and not blocked by a wall. Everything else is listed under remembered, at where it is right now.";
     return block;
   };
 
@@ -756,12 +760,14 @@
         t_seconds: round1(e.t),
         direction: e.summary ? e.summary + " → " + e.dir : e.dir,
         result:
-          e.kind == "turn"
-            ? "turn for the next intersection, " +
-              (pacmanAgent.describeDecisionOutcome
-                ? pacmanAgent.describeDecisionOutcome(e.outcome)
-                : String(e.outcome || ""))
-            : e.kind + ", applied instantly",
+          e.kind == "behavior"
+            ? "the game keeps steering this until your next answer"
+            : e.kind == "turn"
+              ? "turn for the next intersection, " +
+                (pacmanAgent.describeDecisionOutcome
+                  ? pacmanAgent.describeDecisionOutcome(e.outcome)
+                  : String(e.outcome || ""))
+              : e.kind + ", applied instantly",
       });
     }
     return out;
@@ -805,7 +811,7 @@
   };
 
   var bracketSentence =
-    "Contact is 1 tile or closer (touch range), close is 2 to 4 tiles, medium is 5 to 8, far is 9 or more. Bearing 0 is straight ahead, positive is left, negative is right.";
+    "Contact is 1 tile or closer (touch range), close is 2 to 8 tiles, medium is 9 to 16, far is 17 or more. Bearing 0 is straight ahead, positive is left, negative is right.";
 
   var proseFrame = function (inter, enemies, items, brief) {
     var lines = [];
@@ -1010,7 +1016,9 @@
         instructions:
           "You are Pac-Man in a live game. " +
           latencySentence +
-          "Eat pellets to clear the level, avoid ghosts (they kill on touch unless frightened), and don't corner yourself. Which direction should Pac-Man travel?",
+          "Eat pellets to clear the level, avoid ghosts (they kill on touch unless frightened), and don't corner yourself. " +
+          "Your answer is a compass direction and is pressed like an arrow key: straight and a u-turn happen at once, and a side turn is held until the next intersection, then dropped even if that opening is not there, or replaced if a newer answer arrives first. " +
+          "Which direction should Pac-Man travel?",
         criteria: criteria,
       },
     };

@@ -20,18 +20,18 @@
       },
       {
         "name": "close",
-        "span": "2 to 4 tiles",
-        "meaning": "nearby; a turn or two away"
+        "span": "2 to 8 tiles",
+        "meaning": "nearby; a short run, a few turns away"
       },
       {
         "name": "medium",
-        "span": "5 to 8 tiles",
-        "meaning": "a meaningful run"
+        "span": "9 to 16 tiles",
+        "meaning": "across part of the maze"
       },
       {
         "name": "far",
-        "span": "9 tiles or more",
-        "meaning": "distant"
+        "span": "17 tiles or more",
+        "meaning": "the far side of the maze"
       }
     ],
     "relative_bearing_degrees": {
@@ -57,7 +57,7 @@
       "simultaneous": false,
       "note": "One direction per decision. Straight and reverse apply at once; a side turn waits for the next intersection."
     },
-    "view": "In view means within 8 tiles and not blocked by a wall. Everything else is listed under remembered, at where it is right now."
+    "view": "In view means within 8 tiles (contact or close) and not blocked by a wall. Everything else is listed under remembered, at where it is right now."
   },
   "player": {
     "heading": "left",
@@ -109,7 +109,7 @@
       "kind": "ghost",
       "status": "hunting, deadly on touch",
       "distance_tiles": 13,
-      "range": "far",
+      "range": "medium",
       "bearing_degrees": -90,
       "bearing_label": "right",
       "heading": "up",
@@ -121,7 +121,7 @@
       "kind": "ghost",
       "status": "in the ghost house, harmless for now",
       "distance_tiles": 10.3,
-      "range": "far",
+      "range": "medium",
       "bearing_degrees": -119,
       "bearing_label": "behind right",
       "heading": "down",
@@ -133,7 +133,7 @@
       "kind": "ghost",
       "status": "in the ghost house, harmless for now",
       "distance_tiles": 12.7,
-      "range": "far",
+      "range": "medium",
       "bearing_degrees": -135,
       "bearing_label": "behind right",
       "heading": "down",
@@ -167,7 +167,7 @@
       "kind": "energizer",
       "detail": "frightens every hunting ghost",
       "distance_tiles": 5,
-      "range": "medium",
+      "range": "close",
       "bearing_degrees": 0,
       "bearing_label": "dead ahead",
       "last_seen": "now",
@@ -178,7 +178,7 @@
       "kind": "energizer",
       "detail": "frightens every hunting ghost",
       "distance_tiles": 8,
-      "range": "medium",
+      "range": "close",
       "bearing_degrees": 0,
       "bearing_label": "dead ahead",
       "last_seen": "now",

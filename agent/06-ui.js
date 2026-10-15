@@ -71,7 +71,10 @@
           "border:1px solid #262b33;border-radius:6px;background:#0b0d11;overflow:hidden}",
         ".ag-head{flex:none;padding:6px 10px;font-size:11px;letter-spacing:.14em;color:#8cf;" +
           "border-bottom:1px solid #262b33;background:#141821}",
-        ".ag-body{flex:1;display:flex;flex-direction:column;min-height:0;padding:8px;gap:7px;overflow:hidden}",
+        ".ag-body{flex:1;display:flex;flex-direction:column;min-height:0;padding:8px;gap:7px;" +
+          "overflow-y:auto;scrollbar-width:thin}",
+        ".ag-body::-webkit-scrollbar{width:8px}",
+        ".ag-body::-webkit-scrollbar-thumb{background:#22272f;border-radius:4px}",
         ".ag-lab{flex:none;color:#5a6270;font-size:10px;letter-spacing:.06em}",
         ".ag-row{flex:none;display:flex;align-items:center;gap:6px;flex-wrap:wrap}",
         ".ag-row label{color:#8b93a3}",
@@ -135,7 +138,7 @@
         ".ag-lat.over .led{background:#d34848;box-shadow:0 0 6px #d34848}",
         ".ag-lat.over .sub{color:#c98080}",
         "@keyframes agpulse{0%,100%{box-shadow:0 0 0 0 rgba(211,72,72,0)}" +
-          "50%{box-shadow:0 0 0 3px rgba(211,72,72,.35)}",
+          "50%{box-shadow:0 0 0 3px rgba(211,72,72,.35)}}",
         // held-turn strip ("holding left since t=12.8s …") — same shape as the
         // last-choice strip, different tint
         ".ag-hold{background:#0c1218;border-color:#1c2730}",
@@ -147,15 +150,15 @@
         ".ag-hist{flex:1 1 88px;min-height:88px;scrollbar-width:thin}",
         ".ag-hist::-webkit-scrollbar{width:8px}",
         ".ag-hist::-webkit-scrollbar-thumb{background:#22272f;border-radius:4px}",
-        // content boxes: everything shown at once; scroll silently if unavoidable
+        // state, questions, answers, history: scroll inside the box
         ".ag-pre{background:#06070a;border:1px solid #191d24;border-radius:4px;padding:6px;margin:0;" +
           "white-space:pre-wrap;word-break:break-word;overflow:auto;font-size:10px;line-height:1.4;" +
-          "color:#9fb0c0;scrollbar-width:none}",
-        ".ag-pre::-webkit-scrollbar{display:none}",
+          "color:#9fb0c0;scrollbar-width:thin}",
+        ".ag-pre::-webkit-scrollbar{width:8px}",
+        ".ag-pre::-webkit-scrollbar-thumb{background:#22272f;border-radius:4px}",
         ".ag-state{flex:1 1 auto;min-height:120px}",
-        // fixed heights: content scrolls inside (scrollbars stay hidden) —
-        // the questions/answers boxes never resize with their text, so the
-        // left-panel layout cannot jump while playing
+        // fixed heights: the questions/answers boxes scroll inside and never
+        // resize with their text, so the left-panel layout cannot jump
         ".ag-q{flex:none;height:150px}",
         ".ag-a{flex:none;height:72px}",
         ".ag-shot{display:flex;justify-content:center;background:#06070a;border:1px solid #191d24;" +

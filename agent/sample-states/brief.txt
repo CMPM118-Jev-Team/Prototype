@@ -1,10 +1,10 @@
-Contact is 1 tile or closer (touch range), close is 2 to 4 tiles, medium is 5 to 8, far is 9 or more. Bearing 0 is straight ahead, positive is left, negative is right.
+Contact is 1 tile or closer (touch range), close is 2 to 8 tiles, medium is 9 to 16, far is 17 or more. Bearing 0 is straight ahead, positive is left, negative is right.
 You are Pac-Man, heading left. You are stopped, pressed against the wall ahead.
 Relative to that heading: left open, ahead wall, right open, behind open.
 You are not moving.
 Your next intersection is your own tile. Passages there: up open, left wall, down open, right open.
 blinky is hunting, deadly on touch, 18 tiles (far), bearing -93 degrees (right).
-pinky is hunting, deadly on touch, 13 tiles (far), bearing -90 degrees (right).
-inky is in the ghost house, harmless for now, 10.3 tiles (far), bearing -119 degrees (behind right).
-clyde is in the ghost house, harmless for now, 12.7 tiles (far), bearing -135 degrees (behind right).
+pinky is hunting, deadly on touch, 13 tiles (medium), bearing -90 degrees (right).
+inky is in the ghost house, harmless for now, 10.3 tiles (medium), bearing -119 degrees (behind right).
+clyde is in the ghost house, harmless for now, 12.7 tiles (medium), bearing -135 degrees (behind right).
 Level 1, score 70, 3 lives left, 237 pellets left. Ghosts are not frightened.

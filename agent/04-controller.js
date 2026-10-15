@@ -175,6 +175,22 @@
       } catch (e) {
         /* never let the agent break a frame */
       }
+      // After the one-shot turn is consumed, a goto/goal behavior presses
+      // the step the maze calls for right now. This is what the questions
+      // told the model it would do until the next answer.
+      try {
+        if (
+          running &&
+          pacmanAgent.liveSteer &&
+          pacmanAgent.stepLive &&
+          canPoll()
+        ) {
+          var liveDir = pacmanAgent.stepLive();
+          if (liveDir != null) pacman.setInputDir(liveDir);
+        }
+      } catch (e) {
+        /* never let the agent break a frame */
+      }
       try {
         fixedPoll(false);
       } catch (e) {
@@ -309,12 +325,13 @@
     // a still-held turn that never reached an intersection: replaced now
     if (pending) settle(pending, "replaced");
 
+    var live = resolved.live || null;
     var entry = {
       t: pacmanAgent.gameSeconds(),
       dir: resolved.dirName,
       summary: resolved.summary,
-      kind: kind,
-      outcome: kind == "turn" ? "held" : "instant",
+      kind: live ? "behavior" : kind,
+      outcome: live ? "following" : kind == "turn" ? "held" : "instant",
     };
     history.push(entry);
     if (history.length > HISTORY_KEPT) history.shift();
@@ -330,7 +347,13 @@
       ms: res.ms,
     };
 
-    if (kind == "turn") {
+    // goto and goal keep steering themselves every frame (stepLive). A
+    // one-shot direction is a held turn only when it is not already the
+    // heading; the live behavior must not be cleared at the next corner.
+    pacmanAgent.liveSteer = live;
+    if (live) {
+      pacmanAgent.pendingDecision = null;
+    } else if (kind == "turn") {
       pending = {
         dirEnum: D,
         fromX: pacman.tile.x,
@@ -429,7 +452,7 @@
   var setIntervalRate = function () {
     if (intervalId) clearInterval(intervalId);
     intervalId = 0;
-    if (!running || !isFixed()) return; // fixed mode has no wall-clock timer
+    if (!running || isFixed()) return; // fixed mode polls on game frames, not this timer
     intervalId = setInterval(poll, Math.round(1000 / pacmanAgent.settings.hz));
   };
 
@@ -448,6 +471,7 @@
     pacmanAgent.decisionIntervalMs = DECISION_INTERVAL_START_MS;
     lastDecisionGameS = null;
     pacmanAgent.pendingDecision = null;
+    pacmanAgent.liveSteer = null;
     inFlight = 0;
     flightStart = 0;
     agentHold = false;
@@ -471,6 +495,7 @@
     if (pending) settle(pending, "reset");
     pending = null;
     pacmanAgent.pendingDecision = null;
+    pacmanAgent.liveSteer = null;
     if (typeof pacman != "undefined") {
       pacman.clearInputDir(undefined); // release the "held key"
     }
